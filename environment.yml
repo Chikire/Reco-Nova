@@ -1,0 +1,26 @@
+name: reco-nova
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+  - matplotlib
+  - seaborn
+  - jupyterlab
+  - ipykernel
+  - fastapi
+  - uvicorn
+  - streamlit
+  - mlflow
+  - faiss-cpu
+  - pyarrow
+  - pyyaml
+  - pip:
+      - sentence-transformers
+      - lightfm
+      - scikit-surprise
+      - python-dotenv
