@@ -2,7 +2,7 @@
 
 Personalized Product Recommendation Engine for Retail Use Case #05.
 
-# Collaborators
+## Collaborators
 
 - Chikire Aku-Ibe
 - Ssemukula Peter Wasswa
