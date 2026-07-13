@@ -19,6 +19,7 @@ Reco-Nova/
 │   └── processed/
 ├── notebooks/
 ├── scripts/
+│   └── download_data.sh
 ├── src/
 │   └── reco_nova/
 │       ├── api.py
