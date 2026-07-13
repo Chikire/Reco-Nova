@@ -45,6 +45,7 @@ conda activate reco-nova
 
 ```bash
 make download-data
+make preprocess
 make remove-zip
 ```
 
@@ -124,5 +125,34 @@ Data source: Kaggle competition `h-and-m-personalized-fashion-recommendations`.
 Place Kaggle files in `data/raw/`:
 - `transactions_train.csv`
 - `articles.csv`
+- `customers.csv`
 - `images/` (optional but recommended for multimodal embeddings)
+
+Run preprocessing:
+
+```bash
+make preprocess
+```
+
+This runs [src/reco_nova/preprocess.py](/Users/chikire/mds/Reco-Nova/src/reco_nova/preprocess.py) and does the following:
+- Validates required columns in `transactions_train.csv`, `articles.csv`, and `customers.csv`
+- Normalizes text fields and parses transaction dates
+- Cleans customer metadata, including median imputation for missing `age`
+- Builds `item_text` from product/category text columns and `image_path` when matching images exist
+- Splits interactions from the most recent 6-month window into:
+- `train`: months 1-5 plus weeks 1-2 of month 6
+- `val`: week 3 of month 6
+- `test`: week 4 of month 6
+- Builds `user_idx` and `item_idx` mappings from the training split only to avoid leakage
+
+Generated outputs in `data/processed/`:
+- `interactions_train.parquet`
+- `interactions_val.parquet`
+- `interactions_test.parquet`
+- `interactions_clean.parquet`
+- `items_clean.parquet`
+- `customers_clean.parquet`
+- `customer_map.parquet`
+- `item_map.parquet`
+- `preprocess_summary.json`
 
