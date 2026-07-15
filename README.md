@@ -305,3 +305,28 @@ Generated artifacts:
 For a fair warm-start comparison, all four approaches rank only products seen
 in the training catalog. New-item retrieval will be measured separately in the
 cold-start and multimodal evaluations.
+
+## Final Held-Out Evaluation
+
+After selecting model settings on validation data, run the frozen comparison
+once on `interactions_test.parquet`:
+
+```bash
+make evaluate-final
+```
+
+This retrains the final models on the development data (train plus validation),
+keeps the selected `0.75` collaborative hybrid weight fixed, and reports:
+
+- NDCG@K, MAP@K, and Hit Rate@K.
+- Catalog Coverage@K.
+- 95% user-bootstrap confidence intervals.
+- Popularity, collaborative SVD, content TF-IDF, and hybrid results.
+
+The permanent table is written to `docs/offline_evaluation_report.md`; detailed
+intervals and configuration are saved to
+`artifacts/final/final_evaluation.json`. Track the final benchmark with:
+
+```bash
+make evaluate-final-databricks
+```
