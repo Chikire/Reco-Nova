@@ -10,6 +10,8 @@ from dataclasses import asdict, dataclass
 from math import log2
 from typing import Iterable, Mapping, Sequence
 
+import numpy as np
+
 
 @dataclass(frozen=True)
 class OfflineMetrics:
@@ -98,3 +100,63 @@ def evaluate_rankings(
         map_at_k=sum(map_values) / count,
         hit_rate_at_k=sum(hits) / count,
     )
+
+
+def catalog_coverage(
+    recommendations: Mapping[str, Sequence[str]], catalog_size: int, k: int
+) -> float:
+    """Return the fraction of the eligible catalog exposed in top-K lists."""
+    if catalog_size <= 0:
+        raise ValueError("catalog_size must be greater than zero")
+    exposed = {
+        item
+        for ranked in recommendations.values()
+        for item in _unique_top_k(ranked, k)
+    }
+    return len(exposed) / catalog_size
+
+
+def bootstrap_metric_intervals(
+    recommendations: Mapping[str, Sequence[str]],
+    ground_truth: Mapping[str, Iterable[str]],
+    k: int = 10,
+    samples: int = 1_000,
+    confidence: float = 0.95,
+    random_state: int = 42,
+) -> dict[str, tuple[float, float]]:
+    """Estimate macro-metric confidence intervals by resampling users."""
+    if samples <= 0:
+        raise ValueError("samples must be greater than zero")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError("confidence must be between zero and one")
+    users = sorted(set(recommendations) & set(ground_truth))
+    users = [user for user in users if set(ground_truth[user])]
+    if not users:
+        return {
+            "ndcg_at_k": (0.0, 0.0),
+            "map_at_k": (0.0, 0.0),
+            "hit_rate_at_k": (0.0, 0.0),
+        }
+    values = np.array(
+        [
+            [
+                ndcg_at_k(recommendations[user], ground_truth[user], k),
+                average_precision_at_k(
+                    recommendations[user], ground_truth[user], k
+                ),
+                hit_rate_at_k(recommendations[user], ground_truth[user], k),
+            ]
+            for user in users
+        ],
+        dtype=float,
+    )
+    rng = np.random.default_rng(random_state)
+    indices = rng.integers(0, len(users), size=(samples, len(users)))
+    bootstrap_means = values[indices].mean(axis=1)
+    tail = (1.0 - confidence) / 2.0
+    bounds = np.quantile(bootstrap_means, [tail, 1.0 - tail], axis=0)
+    names = ("ndcg_at_k", "map_at_k", "hit_rate_at_k")
+    return {
+        name: (float(bounds[0, i]), float(bounds[1, i]))
+        for i, name in enumerate(names)
+    }
