@@ -6,12 +6,13 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
 import faiss
+from difflib import SequenceMatcher
 
 class ContentRecommender:
     def __init__(self, items_df: pd.DataFrame):
         """
         Initializes the recommender with the cleaned items catalog.
-        Requires 'article_id' and 'item_text' columns.
+        Requires 'article_id', 'item_text', and 'prod_name' columns.
         """
         # Drop items with missing text to prevent crashes
         self.items_df = items_df.dropna(subset=['item_text']).reset_index(drop=True)
@@ -25,13 +26,69 @@ class ContentRecommender:
         self.tfidf_matrix = None
         self.faiss_index = None
 
+    def _norm_text(self, value) -> str:
+        """Normalize text for consistent matching."""
+        return str(value).strip().lower()
+
+    def resolve_name_to_article_id(self, name_query: str) -> dict | None:
+        """Resolve a name query to the best matching article_id and keep ID canonical."""
+        query_norm = self._norm_text(name_query)
+        work = self.items_df[["article_id", "prod_name", "item_text"]].copy()
+        work["prod_name_norm"] = work["prod_name"].fillna("").map(self._norm_text)
+
+        # 1) Exact name match
+        exact = work[work["prod_name_norm"] == query_norm]
+        if not exact.empty:
+            best = exact.iloc[0]
+            return {
+                "query_name": name_query,
+                "article_id": best["article_id"],
+                "prod_name": best["prod_name"],
+                "match_type": "exact",
+                "name_match_score": 1.0,
+            }
+
+        # 2) Contains match
+        contains = work[work["prod_name_norm"].str.contains(query_norm, na=False)]
+        if not contains.empty:
+            contains = contains.copy()
+            contains["name_match_score"] = contains["prod_name_norm"].map(
+                lambda x: SequenceMatcher(None, query_norm, x).ratio()
+            )
+            best = contains.sort_values("name_match_score", ascending=False).iloc[0]
+            return {
+                "query_name": name_query,
+                "article_id": best["article_id"],
+                "prod_name": best["prod_name"],
+                "match_type": "contains",
+                "name_match_score": float(best["name_match_score"]),
+            }
+
+        # 3) Fuzzy fallback on name similarity
+        scored = work.copy()
+        scored["name_match_score"] = scored["prod_name_norm"].map(
+            lambda x: SequenceMatcher(None, query_norm, x).ratio()
+        )
+        best = scored.sort_values("name_match_score", ascending=False).iloc[0]
+
+        if best["name_match_score"] < 0.35:
+            return None
+
+        return {
+            "query_name": name_query,
+            "article_id": best["article_id"],
+            "prod_name": best["prod_name"],
+            "match_type": "fuzzy",
+            "name_match_score": float(best["name_match_score"]),
+        }
+
     def build_tfidf(self):
         """Build TF-IDF features."""
         print("Building TF-IDF Matrix...")
         vectorizer = TfidfVectorizer(
             stop_words='english',
-            max_features=5000,  # Cap features to save memory
-            ngram_range=(1, 2)  # Capture pairs like "blue shirt"
+            max_features=5000,
+            ngram_range=(1, 2)
         )
         self.tfidf_matrix = vectorizer.fit_transform(self.item_texts)
         print(f"TF-IDF Matrix Shape: {self.tfidf_matrix.shape}")
@@ -39,18 +96,15 @@ class ContentRecommender:
     def build_embeddings(self, model_name: str = 'all-MiniLM-L6-v2'):
         """Generate sentence embeddings for products."""
         print(f"Loading SentenceTransformer: {model_name}...")
-        # all-MiniLM-L6-v2 is the industry standard for fast, high-quality embeddings
         model = SentenceTransformer(model_name)
         
         print("Encoding item texts (this may take a few minutes)...")
         embeddings = model.encode(self.item_texts, show_progress_bar=True, batch_size=256)
         
         print("Building FAISS Index for fast similarity search...")
-        # L2 normalize embeddings so Inner Product equals Cosine Similarity
         faiss.normalize_L2(embeddings)
         dimension = embeddings.shape[1]
         
-        # FAISS prevents the OOM crashes that happen if you try to do a 105k x 105k cosine matrix
         self.faiss_index = faiss.IndexFlatIP(dimension) 
         self.faiss_index.add(embeddings)
         print("FAISS Index successfully built.")
@@ -65,11 +119,8 @@ class ContentRecommender:
         idx = self.id_to_idx[article_id]
         target_vector = self.tfidf_matrix[idx]
         
-        # Compute cosine similarity between the target item and all other items
         similarities = cosine_similarity(target_vector, self.tfidf_matrix).flatten()
         
-        # Get indices of top N scores (excluding the item itself)
-        # argpartition is much faster than sorting the entire array
         top_indices = np.argpartition(similarities, -(top_n + 1))[-(top_n + 1):]
         top_indices = top_indices[np.argsort(similarities[top_indices])][::-1]
         
@@ -106,19 +157,12 @@ class ContentRecommender:
             
         idx = self.id_to_idx[article_id]
         
-        # Reconstruct the vector from the FAISS index
         target_vector = np.expand_dims(self.faiss_index.reconstruct(idx), axis=0)
-        
-        # FAISS search is lightning fast. We ask for top_n + 1 to account for the item itself
         distances, indices = self.faiss_index.search(target_vector, top_n + 1)
         
         return [self.article_ids[i] for i in indices[0] if i != idx][:top_n]
 
-    def get_similar_embeddings_df(
-        self,
-        article_id: str,
-        top_n: int = 5,
-    ) -> pd.DataFrame:
+    def get_similar_embeddings_df(self, article_id: str, top_n: int = 5) -> pd.DataFrame:
         """Return a ranked DataFrame with embedding similarity scores and item details."""
         if self.faiss_index is None:
             raise ValueError("Call build_embeddings() first.")
@@ -130,22 +174,17 @@ class ContentRecommender:
         distances, indices = self.faiss_index.search(target_vector, top_n + 1)
 
         rows = []
-        for rank, (score, candidate_idx) in enumerate(
-            zip(distances[0], indices[0]),
-            start=1,
-        ):
+        for rank, (score, candidate_idx) in enumerate(zip(distances[0], indices[0]), start=1):
             if candidate_idx == idx:
                 continue
-            rows.append(
-                {
-                    "query_article_id": article_id,
-                    "query_item_text": self.items_df.iloc[idx]["item_text"],
-                    "rank": len(rows) + 1,
-                    "score": float(score),
-                    "article_id": self.article_ids[candidate_idx],
-                    "item_text": self.items_df.iloc[candidate_idx]["item_text"],
-                }
-            )
+            rows.append({
+                "query_article_id": article_id,
+                "query_item_text": self.items_df.iloc[idx]["item_text"],
+                "rank": len(rows) + 1,
+                "score": float(score),
+                "article_id": self.article_ids[candidate_idx],
+                "item_text": self.items_df.iloc[candidate_idx]["item_text"],
+            })
             if len(rows) >= top_n:
                 break
 
