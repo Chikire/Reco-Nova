@@ -18,15 +18,18 @@ Reco-Nova/
 │   ├── raw/
 │   └── processed/
 ├── notebooks/
+│   └── content_model_notebook.ipynb
 ├── scripts/
 │   └── download_data.sh
 ├── src/
 │   └── reco_nova/
 │       ├── api.py
 │       ├── app.py
+│       ├── content_model.py
 │       ├── evaluation.py
 │       └── recommender.py
 └── tests/
+	└── test_content_model.py
 ```
 
 ## Starter Stack
@@ -255,3 +258,15 @@ The Databricks run and experiment IDs are also added to the local
 `artifacts/baseline_metrics.json` report. OAuth is preferred, but if another
 workspace uses token authentication, never place its token in the Makefile,
 repository, notebooks, or committed `.env` files.
+## Content Model Files
+
+- `src/reco_nova/content_model.py`: Content-based recommendation engine (TF-IDF and embedding retrieval), including name-to-item resolution helpers.
+- `notebooks/content_model_notebook.ipynb`: End-to-end experimentation notebook for ID-based and name-based content retrieval with ranked result tables.
+- `tests/test_content_model.py`: Unit tests for content-model behavior.
+
+Run content-model tests:
+
+```bash
+pytest tests/test_content_model.py
+```
+
