@@ -219,11 +219,3 @@ __marimo__/
 
 # Project data artifacts
 data/
-!data/
-data/*
-!data/processed/
-data/processed/*
-!data/processed/.gitkeep
-!data/raw/
-data/raw/*
-!data/raw/.gitkeep
