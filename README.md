@@ -330,3 +330,19 @@ intervals and configuration are saved to
 ```bash
 make evaluate-final-databricks
 ```
+
+## New-User Cold Start
+
+Unknown users follow an explainable fallback hierarchy: recent session items,
+age-band and membership popularity, preferred product group, then global
+popularity. Evaluate genuinely unseen test users with:
+
+```bash
+make evaluate-cold-start
+make evaluate-cold-start-databricks
+```
+
+The command compares demographic and no-context fallbacks using NDCG, MAP, Hit
+Rate, catalog coverage, and bootstrap confidence intervals. It writes a
+permanent report with examples to `docs/cold_start_report.md` and detailed
+results to `artifacts/cold_start/cold_start_metrics.json`.

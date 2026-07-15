@@ -117,3 +117,22 @@ class ContentRecommender:
         candidates = np.argpartition(-scores, limit - 1)[:limit]
         ranked = candidates[np.argsort(-scores[candidates], kind="stable")]
         return [(str(self.item_ids_[i]), float(scores[i])) for i in ranked]
+
+    def recommend_from_items(
+        self, article_ids: list[str], k: int = 10
+    ) -> list[tuple[str, float]]:
+        """Recommend from anonymous session items without requiring a user ID."""
+        indices = [
+            self.item_to_index_[str(item)]
+            for item in article_ids
+            if str(item) in self.item_to_index_
+        ]
+        if not indices:
+            return []
+        profile = normalize(self.item_factors_[indices].mean(axis=0).reshape(1, -1))[0]
+        scores = np.asarray(self.item_factors_ @ profile).reshape(-1)
+        scores[indices] = -np.inf
+        limit = min(k, len(scores) - len(set(indices)))
+        candidates = np.argpartition(-scores, limit - 1)[:limit]
+        ranked = candidates[np.argsort(-scores[candidates], kind="stable")]
+        return [(str(self.item_ids_[i]), float(scores[i])) for i in ranked]

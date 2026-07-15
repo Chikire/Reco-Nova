@@ -3,7 +3,7 @@ RAW_DIR := data/raw
 PROCESSED_DIR := data/processed
 ZIP_FILE := $(RAW_DIR)/h-and-m-personalized-fashion-recommendations.zip
 
-.PHONY: help download-data remove-zip preprocess train-baseline train-baseline-databricks train-hybrid train-hybrid-databricks evaluate-final evaluate-final-databricks test
+.PHONY: help download-data remove-zip preprocess train-baseline train-baseline-databricks train-hybrid train-hybrid-databricks evaluate-final evaluate-final-databricks evaluate-cold-start evaluate-cold-start-databricks test
 help:
 	@echo "Available targets:"
 	@echo "  make download-data - Download + extract H&M Kaggle competition files"
@@ -15,6 +15,8 @@ help:
 	@echo "  make train-hybrid-databricks - Track hybrid comparison in Databricks MLflow"
 	@echo "  make evaluate-final - Evaluate frozen models on the held-out test split"
 	@echo "  make evaluate-final-databricks - Track final test metrics in Databricks"
+	@echo "  make evaluate-cold-start - Evaluate new-user fallback strategies"
+	@echo "  make evaluate-cold-start-databricks - Track cold-start results in Databricks"
 	@echo "  make test          - Run the automated test suite"
 	
 download-data:
@@ -45,6 +47,12 @@ evaluate-final:
 
 evaluate-final-databricks:
 	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_final --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/final --report-path docs/offline_evaluation_report.md --tracking-uri databricks --experiment-name /Shared/reco-nova-final-evaluation
+
+evaluate-cold-start:
+	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_cold_start --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/cold_start --report-path docs/cold_start_report.md
+
+evaluate-cold-start-databricks:
+	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_cold_start --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/cold_start --report-path docs/cold_start_report.md --tracking-uri databricks --experiment-name /Shared/reco-nova-cold-start
 
 test:
 	PYTHONPATH=$(PYTHONPATH) python -m pytest -q
