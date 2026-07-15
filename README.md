@@ -47,6 +47,8 @@ conda activate reco-nova
 ```bash
 make download-data
 make preprocess
+make train-baseline
+make test
 make remove-zip
 ```
 
@@ -135,7 +137,7 @@ Run preprocessing:
 make preprocess
 ```
 
-This runs [src/reco_nova/preprocess.py](/Users/chikire/mds/Reco-Nova/src/reco_nova/preprocess.py) and does the following:
+This runs `src/reco_nova/preprocess.py` and does the following:
 - Validates required columns in `transactions_train.csv`, `articles.csv`, and `customers.csv`
 - Normalizes text fields and parses transaction dates
 - Cleans customer metadata, including median imputation for missing `age`
@@ -157,3 +159,99 @@ Generated outputs in `data/processed/`:
 - `item_map.parquet`
 - `preprocess_summary.json`
 
+## Collaborative Baseline and Offline Evaluation
+
+After preprocessing, train the popularity and collaborative-filtering models:
+
+```bash
+make train-baseline
+```
+
+The baseline uses randomized truncated SVD over a sparse implicit-feedback
+matrix. Repeated purchases receive logarithmically scaled confidence, and
+products already seen during training are removed from recommendations. A
+global popularity model provides both a comparison baseline and an unknown-user
+fallback.
+
+For laptop-friendly iteration, the command defaults to the most recent 500,000
+training rows and 1,000 warm validation users. Run the module directly to
+change these limits; a value of `0` disables the corresponding cap:
+
+```bash
+PYTHONPATH=src python -m reco_nova.train \
+  --max-train-rows 1000000 \
+  --max-eval-users 5000 \
+  --n-components 64 \
+  --k 12
+```
+
+Generated local artifacts (ignored by Git):
+
+- `artifacts/popularity.joblib`
+- `artifacts/collaborative_svd.joblib`
+- `artifacts/baseline_metrics.json`
+
+The report compares NDCG@K, MAP@K, and Hit Rate@K. It evaluates only warm
+validation users and catalog items because new-user and new-item performance is
+reported separately by the cold-start milestone. Duplicate holdout purchases
+count as one relevant product, and products previously purchased by that user
+are excluded from both recommendations and relevance labels.
+
+Run all automated tests with:
+
+```bash
+make test
+```
+
+## Databricks MLflow Tracking
+
+Baseline experiments can be recorded in the Databricks-hosted MLflow tracking
+server. Databricks Free Edition users can authenticate through browser-based
+OAuth and do not need a personal access token.
+
+First install or update the current Databricks CLI. Then copy the workspace URL
+from your browser (only the scheme and hostname, without a notebook path) and
+create a named OAuth profile:
+
+```bash
+databricks auth login --host "https://your-workspace.cloud.databricks.com" --profile RECO_NOVA
+```
+
+The command opens a browser for interactive sign-in. On macOS, the short-lived
+OAuth credential is stored in Keychain rather than in this repository. Verify
+the profile and configure MLflow to use it:
+
+```bash
+databricks current-user me --profile RECO_NOVA
+export DATABRICKS_CONFIG_PROFILE="RECO_NOVA"
+export MLFLOW_TRACKING_URI="databricks"
+export MLFLOW_EXPERIMENT_NAME="/Shared/reco-nova-baselines"
+```
+
+Ensure the declared MLflow and Databricks dependencies are installed, then run:
+
+```bash
+conda env update -f environment.yml
+make train-baseline-databricks
+```
+
+If the environment was created before MLflow 3 was declared, remove the stale
+conda package before updating:
+
+```bash
+conda remove -n reco-nova mlflow databricks-cli -y
+conda env update -n reco-nova -f environment.yml
+```
+
+Each run records:
+
+- Training limits, SVD dimensions, K, and random seed.
+- Training row, user, item, and validation-user counts.
+- NDCG@K, MAP@K, and Hit Rate@K for popularity and collaborative SVD.
+- The JSON evaluation report and both serialized model artifacts.
+- Project, task, and evaluation-scope tags.
+
+The Databricks run and experiment IDs are also added to the local
+`artifacts/baseline_metrics.json` report. OAuth is preferred, but if another
+workspace uses token authentication, never place its token in the Makefile,
+repository, notebooks, or committed `.env` files.

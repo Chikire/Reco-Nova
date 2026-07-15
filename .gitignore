@@ -219,3 +219,6 @@ __marimo__/
 
 # Project data artifacts
 data/
+
+# Trained models and local experiment reports
+artifacts/
