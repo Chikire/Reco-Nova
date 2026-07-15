@@ -18,15 +18,18 @@ Reco-Nova/
 │   ├── raw/
 │   └── processed/
 ├── notebooks/
+│   └── content_model_notebook.ipynb
 ├── scripts/
 │   └── download_data.sh
 ├── src/
 │   └── reco_nova/
 │       ├── api.py
 │       ├── app.py
+│       ├── content_model.py
 │       ├── evaluation.py
 │       └── recommender.py
 └── tests/
+	└── test_content_model.py
 ```
 
 ## Starter Stack
