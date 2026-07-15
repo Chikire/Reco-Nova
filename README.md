@@ -18,15 +18,18 @@ Reco-Nova/
 │   ├── raw/
 │   └── processed/
 ├── notebooks/
+│   └── content_model_notebook.ipynb
 ├── scripts/
 │   └── download_data.sh
 ├── src/
 │   └── reco_nova/
 │       ├── api.py
 │       ├── app.py
+│       ├── content_model.py
 │       ├── evaluation.py
 │       └── recommender.py
 └── tests/
+	└── test_content_model.py
 ```
 
 ## Starter Stack
@@ -156,4 +159,16 @@ Generated outputs in `data/processed/`:
 - `customer_map.parquet`
 - `item_map.parquet`
 - `preprocess_summary.json`
+
+## Content Model Files
+
+- `src/reco_nova/content_model.py`: Content-based recommendation engine (TF-IDF and embedding retrieval), including name-to-item resolution helpers.
+- `notebooks/content_model_notebook.ipynb`: End-to-end experimentation notebook for ID-based and name-based content retrieval with ranked result tables.
+- `tests/test_content_model.py`: Unit tests for content-model behavior.
+
+Run content-model tests:
+
+```bash
+pytest tests/test_content_model.py
+```
 
