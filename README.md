@@ -255,3 +255,50 @@ The Databricks run and experiment IDs are also added to the local
 `artifacts/baseline_metrics.json` report. OAuth is preferred, but if another
 workspace uses token authentication, never place its token in the Makefile,
 repository, notebooks, or committed `.env` files.
+
+## Content-Based and Hybrid Recommender
+
+Issue #10 combines collaborative and product-metadata signals. The content
+model creates TF-IDF word/bigram features from `item_text`, compresses them with
+randomized SVD, and represents each user by a weighted centroid of previously
+purchased products. The hybrid ranker normalizes collaborative and content
+scores per user before blending them.
+
+Train and tune locally:
+
+```bash
+make train-hybrid
+```
+
+Track the comparison and weight sweep in Databricks MLflow:
+
+```bash
+export DATABRICKS_CONFIG_PROFILE="RECO_NOVA"
+export MLFLOW_TRACKING_URI="databricks"
+make train-hybrid-databricks
+```
+
+Defaults compare collaborative weights `0.25`, `0.50`, and `0.75` on a seeded
+random sample of 1,000 warm validation users. The run reports popularity,
+collaborative SVD, content TF-IDF, and best-hybrid metrics. Customize a run with:
+
+```bash
+PYTHONPATH=src python -m reco_nova.train_hybrid \
+  --max-train-rows 1000000 \
+  --max-eval-users 5000 \
+  --n-components 64 \
+  --hybrid-weights 0.25,0.5,0.75 \
+  --k 12
+```
+
+Generated artifacts:
+
+- `artifacts/hybrid/content_tfidf.joblib`
+- `artifacts/hybrid/collaborative_svd.joblib`
+- `artifacts/hybrid/popularity.joblib`
+- `artifacts/hybrid/best_hybrid_config.json`
+- `artifacts/hybrid/hybrid_metrics.json`
+
+For a fair warm-start comparison, all four approaches rank only products seen
+in the training catalog. New-item retrieval will be measured separately in the
+cold-start and multimodal evaluations.

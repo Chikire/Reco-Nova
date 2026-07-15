@@ -18,15 +18,21 @@ def _numeric_metrics(report: Mapping[str, Any]) -> dict[str, float]:
         for metric_name, value in values.items():
             if metric_name not in {"k", "users_evaluated"}:
                 output[f"{model_name}.{metric_name}"] = float(value)
+    for weight_name, values in report.get("hybrid_weight_tuning", {}).items():
+        for metric_name, value in values.items():
+            if metric_name not in {"k", "users_evaluated"}:
+                output[f"tuning.{weight_name}.{metric_name}"] = float(value)
     return output
 
 
-def log_baseline_run(
+def log_recommender_run(
     report: Mapping[str, Any],
     artifacts_dir: Path,
     tracking_uri: str,
     experiment_name: str,
     run_name: str | None = None,
+    task: str = "recommendation-evaluation",
+    artifact_path: str = "recommender",
 ) -> dict[str, str]:
     """Log configuration, metrics, counts, and artifacts to an MLflow server."""
     try:
@@ -50,14 +56,23 @@ def log_baseline_run(
         mlflow.set_tags(
             {
                 "project": "reco-nova",
-                "task": "baseline-collaborative-filtering",
+                "task": task,
                 "evaluation_scope": "warm-start",
             }
         )
-        mlflow.log_artifacts(str(artifacts_dir), artifact_path="baseline")
+        mlflow.log_artifacts(str(artifacts_dir), artifact_path=artifact_path)
         return {
             "run_id": run.info.run_id,
             "experiment_id": run.info.experiment_id,
             "tracking_uri": tracking_uri,
             "experiment_name": experiment_name,
         }
+
+
+def log_baseline_run(**kwargs: Any) -> dict[str, str]:
+    """Backward-compatible baseline tracking wrapper."""
+    return log_recommender_run(
+        **kwargs,
+        task="baseline-collaborative-filtering",
+        artifact_path="baseline",
+    )
