@@ -1,12 +1,100 @@
-"""Offline recommendation metrics."""
+"""Offline top-K evaluation for recommendation models.
 
-from dataclasses import dataclass
+Metrics are computed per user and then macro-averaged so highly active users do
+not dominate the report. Duplicate purchases are treated as one relevant item.
+"""
+
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from math import log2
+from typing import Iterable, Mapping, Sequence
 
 
-@dataclass
+@dataclass(frozen=True)
 class OfflineMetrics:
-    """Standard ranking metrics for held-out evaluation."""
+    """Macro-averaged implicit-feedback ranking metrics."""
 
-    ndcg: float = 0.0
-    map_at_k: float = 0.0
-    hit_rate: float = 0.0
+    k: int
+    users_evaluated: int
+    ndcg_at_k: float
+    map_at_k: float
+    hit_rate_at_k: float
+
+    def to_dict(self) -> dict[str, int | float]:
+        """Return a JSON-serializable representation."""
+        return asdict(self)
+
+
+def _unique_top_k(items: Iterable[str], k: int) -> list[str]:
+    """Keep the first occurrence of each item, up to ``k`` items."""
+    if k <= 0:
+        raise ValueError("k must be greater than zero")
+    return list(dict.fromkeys(str(item) for item in items))[:k]
+
+
+def ndcg_at_k(recommended: Sequence[str], relevant: Iterable[str], k: int) -> float:
+    """Return normalized discounted cumulative gain for one user."""
+    truth = {str(item) for item in relevant}
+    if not truth:
+        return 0.0
+    ranked = _unique_top_k(recommended, k)
+    dcg = sum(
+        1.0 / log2(rank + 2)
+        for rank, item in enumerate(ranked)
+        if item in truth
+    )
+    ideal_hits = min(len(truth), k)
+    ideal = sum(1.0 / log2(rank + 2) for rank in range(ideal_hits))
+    return dcg / ideal
+
+
+def average_precision_at_k(
+    recommended: Sequence[str], relevant: Iterable[str], k: int
+) -> float:
+    """Return average precision at K for one user."""
+    truth = {str(item) for item in relevant}
+    if not truth:
+        return 0.0
+    hits = 0
+    precision_sum = 0.0
+    for rank, item in enumerate(_unique_top_k(recommended, k), start=1):
+        if item in truth:
+            hits += 1
+            precision_sum += hits / rank
+    return precision_sum / min(len(truth), k)
+
+
+def hit_rate_at_k(recommended: Sequence[str], relevant: Iterable[str], k: int) -> float:
+    """Return one when at least one relevant item appears in the top K."""
+    truth = {str(item) for item in relevant}
+    if not truth:
+        return 0.0
+    return float(bool(set(_unique_top_k(recommended, k)) & truth))
+
+
+def evaluate_rankings(
+    recommendations: Mapping[str, Sequence[str]],
+    ground_truth: Mapping[str, Iterable[str]],
+    k: int = 10,
+) -> OfflineMetrics:
+    """Evaluate users present in ground truth and recommendation output."""
+    users = sorted(set(recommendations) & set(ground_truth))
+    users = [user for user in users if set(ground_truth[user])]
+    if not users:
+        return OfflineMetrics(k, 0, 0.0, 0.0, 0.0)
+
+    ndcg = [ndcg_at_k(recommendations[u], ground_truth[u], k) for u in users]
+    map_values = [
+        average_precision_at_k(recommendations[u], ground_truth[u], k)
+        for u in users
+    ]
+    hits = [hit_rate_at_k(recommendations[u], ground_truth[u], k) for u in users]
+    count = len(users)
+    return OfflineMetrics(
+        k=k,
+        users_evaluated=count,
+        ndcg_at_k=sum(ndcg) / count,
+        map_at_k=sum(map_values) / count,
+        hit_rate_at_k=sum(hits) / count,
+    )

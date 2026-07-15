@@ -1,0 +1,63 @@
+"""MLflow experiment tracking utilities.
+
+The module imports MLflow lazily so local model development and unit tests do
+not require a configured tracking server. Databricks credentials must be
+provided through environment variables, never source code or CLI arguments.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Mapping
+
+
+def _numeric_metrics(report: Mapping[str, Any]) -> dict[str, float]:
+    """Flatten per-model report metrics into MLflow-compatible names."""
+    output: dict[str, float] = {}
+    for model_name, values in report["metrics"].items():
+        for metric_name, value in values.items():
+            if metric_name not in {"k", "users_evaluated"}:
+                output[f"{model_name}.{metric_name}"] = float(value)
+    return output
+
+
+def log_baseline_run(
+    report: Mapping[str, Any],
+    artifacts_dir: Path,
+    tracking_uri: str,
+    experiment_name: str,
+    run_name: str | None = None,
+) -> dict[str, str]:
+    """Log configuration, metrics, counts, and artifacts to an MLflow server."""
+    try:
+        import mlflow
+    except Exception as exc:
+        raise RuntimeError(
+            "MLflow tracking was requested, but MLflow could not be imported. "
+            "The environment may contain the obsolete conda-forge MLflow 1.x "
+            "package. Reinstall the tracking dependencies from environment.yml. "
+            f"Original import error: {exc}"
+        ) from exc
+
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment(experiment_name)
+    with mlflow.start_run(run_name=run_name) as run:
+        mlflow.log_params(report["configuration"])
+        mlflow.log_params(
+            {f"data.{name}": value for name, value in report["data"].items()}
+        )
+        mlflow.log_metrics(_numeric_metrics(report))
+        mlflow.set_tags(
+            {
+                "project": "reco-nova",
+                "task": "baseline-collaborative-filtering",
+                "evaluation_scope": "warm-start",
+            }
+        )
+        mlflow.log_artifacts(str(artifacts_dir), artifact_path="baseline")
+        return {
+            "run_id": run.info.run_id,
+            "experiment_id": run.info.experiment_id,
+            "tracking_uri": tracking_uri,
+            "experiment_name": experiment_name,
+        }
