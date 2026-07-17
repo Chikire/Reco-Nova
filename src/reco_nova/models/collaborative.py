@@ -24,11 +24,22 @@ class CollaborativeSVD:
         self.n_components = n_components
         self.random_state = random_state
 
-    def fit(self, interactions: pd.DataFrame) -> "CollaborativeSVD":
+    def fit(
+        self,
+        interactions: pd.DataFrame,
+        recency_half_life_days: float | None = None,
+    ) -> "CollaborativeSVD":
         required = {"customer_id", "article_id"}
         if missing := required - set(interactions.columns):
             raise ValueError(f"Missing interaction columns: {sorted(missing)}")
-        frame = interactions[["customer_id", "article_id"]].astype(str)
+        use_recency = recency_half_life_days is not None and "event_ts" in interactions.columns
+        columns = ["customer_id", "article_id", "event_ts"] if use_recency else [
+            "customer_id",
+            "article_id",
+        ]
+        frame = interactions[columns].copy()
+        frame["customer_id"] = frame["customer_id"].astype(str)
+        frame["article_id"] = frame["article_id"].astype(str)
         if frame.empty:
             raise ValueError("Cannot fit on empty interactions")
 
@@ -38,8 +49,17 @@ class CollaborativeSVD:
         user_idx = frame["customer_id"].map(self.user_to_index_).to_numpy()
         item_index = {value: i for i, value in enumerate(self.item_ids_)}
         item_idx = frame["article_id"].map(item_index).to_numpy()
+        if use_recency:
+            event_ts = pd.to_datetime(frame["event_ts"])
+            age_days = (event_ts.max() - event_ts).dt.total_seconds() / 86_400.0
+            decay = np.log(2) / recency_half_life_days
+            values = np.exp(-decay * age_days.to_numpy(dtype=np.float64)).astype(
+                np.float32
+            )
+        else:
+            values = np.ones(len(frame), dtype=np.float32)
         matrix = csr_matrix(
-            (np.ones(len(frame), dtype=np.float32), (user_idx, item_idx)),
+            (values, (user_idx, item_idx)),
             shape=(len(self.user_ids_), len(self.item_ids_)),
         )
         matrix.data = np.log1p(matrix.data)

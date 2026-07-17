@@ -1,8 +1,9 @@
 """Train and evaluate Reco-Nova baseline recommenders.
 
-Run with ``python -m reco_nova.train --help``. The command intentionally caps
-training/evaluation by default for fast local iteration; pass ``0`` to a limit
-argument to use all eligible rows or users.
+Run with ``python -m reco_nova.train --help``. Training uses all eligible rows
+by default; pass a positive ``--max-train-rows`` value to cap training data
+for faster local iteration. ``--max-eval-users`` still defaults to a capped
+sample of warm validation users to keep evaluation fast.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from pathlib import Path
 
 import joblib
 import pandas as pd
+import pyarrow.parquet as pq
 
 from reco_nova.evaluation import evaluate_rankings
 from reco_nova.models import CollaborativeSVD, PopularityRecommender
@@ -22,6 +24,31 @@ from reco_nova.tracking import log_baseline_run
 
 def _positive_limit(frame: pd.DataFrame, limit: int) -> pd.DataFrame:
     return frame.tail(limit).copy() if limit > 0 and len(frame) > limit else frame
+
+
+def _parquet_columns(path: Path) -> set[str]:
+    """Return the column names of a parquet file without reading its data."""
+    try:
+        return set(pq.ParquetFile(path).schema.names)
+    except Exception:
+        return set()
+
+
+def read_interactions(
+    path: Path, want_recency: bool = False
+) -> tuple[pd.DataFrame, bool]:
+    """Read customer/article interactions, adding ``event_ts`` when recency
+    weighting is requested and the column is available in the parquet file.
+
+    Returns the frame plus whether recency weighting can actually be applied.
+    """
+    columns = ["customer_id", "article_id"]
+    has_recency = False
+    if want_recency and "event_ts" in _parquet_columns(path):
+        columns.append("event_ts")
+        has_recency = True
+    frame = pd.read_parquet(path, columns=columns).dropna()
+    return frame, has_recency
 
 
 def build_ground_truth(
@@ -52,11 +79,12 @@ def build_ground_truth(
 def train_and_evaluate(
     processed_dir: Path,
     artifacts_dir: Path,
-    max_train_rows: int = 500_000,
+    max_train_rows: int = 0,
     max_eval_users: int = 1_000,
     n_components: int = 64,
     k: int = 12,
     random_state: int = 42,
+    recency_half_life_days: float | None = None,
     tracking_uri: str | None = None,
     experiment_name: str = "/Shared/reco-nova-baselines",
     run_name: str | None = None,
@@ -70,16 +98,18 @@ def train_and_evaluate(
                 f"Missing {path}. Run `make preprocess` before training."
             )
 
-    columns = ["customer_id", "article_id"]
-    train = pd.read_parquet(train_path, columns=columns).dropna()
-    validation = pd.read_parquet(validation_path, columns=columns).dropna()
+    want_recency = recency_half_life_days is not None
+    train, recency_available = read_interactions(train_path, want_recency)
+    validation, _ = read_interactions(validation_path, False)
     train = _positive_limit(train, max_train_rows)
-    train = train.astype(str)
+    train["customer_id"] = train["customer_id"].astype(str)
+    train["article_id"] = train["article_id"].astype(str)
+    effective_recency = recency_half_life_days if recency_available else None
 
     popularity = PopularityRecommender().fit(train)
     collaborative = CollaborativeSVD(
         n_components=n_components, random_state=random_state
-    ).fit(train)
+    ).fit(train, recency_half_life_days=effective_recency)
 
     truth = build_ground_truth(
         validation,
@@ -110,6 +140,7 @@ def train_and_evaluate(
             "n_components": n_components,
             "k": k,
             "random_state": random_state,
+            "recency_half_life_days": effective_recency,
         },
         "data": {
             "training_rows": len(train),
@@ -151,11 +182,20 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train baseline recommenders")
     parser.add_argument("--processed-dir", type=Path, default=Path("data/processed"))
     parser.add_argument("--artifacts-dir", type=Path, default=Path("artifacts"))
-    parser.add_argument("--max-train-rows", type=int, default=500_000)
+    parser.add_argument("--max-train-rows", type=int, default=0)
     parser.add_argument("--max-eval-users", type=int, default=1_000)
     parser.add_argument("--n-components", type=int, default=64)
     parser.add_argument("--k", type=int, default=12)
     parser.add_argument("--random-state", type=int, default=42)
+    parser.add_argument(
+        "--recency-half-life-days",
+        type=float,
+        default=None,
+        help=(
+            "Exponentially decay interaction weight with this half-life in "
+            "days (requires the event_ts column). Disabled by default."
+        ),
+    )
     parser.add_argument(
         "--tracking-uri",
         default=os.getenv("MLFLOW_TRACKING_URI"),

@@ -25,7 +25,7 @@ from reco_nova.models import (
     PopularityRecommender,
 )
 from reco_nova.tracking import log_recommender_run
-from reco_nova.train import _positive_limit, build_ground_truth
+from reco_nova.train import _positive_limit, build_ground_truth, read_interactions
 
 
 def _recommend_users(model: object, users: list[str], k: int) -> dict[str, list[str]]:
@@ -60,7 +60,7 @@ def _attach_fresh_metrics(
 def train_hybrid_and_evaluate(
     processed_dir: Path,
     artifacts_dir: Path,
-    max_train_rows: int = 500_000,
+    max_train_rows: int = 0,
     max_eval_users: int = 1_000,
     n_components: int = 64,
     max_text_features: int = 20_000,
@@ -69,6 +69,7 @@ def train_hybrid_and_evaluate(
     hybrid_weights: tuple[float, ...] = (0.25, 0.5, 0.75),
     include_fresh_catalog_items: bool = False,
     min_fresh_in_top_k: int = 0,
+    recency_half_life_days: float | None = None,
     tracking_uri: str | None = None,
     experiment_name: str = "/Shared/reco-nova-hybrid",
     run_name: str | None = None,
@@ -87,23 +88,33 @@ def train_hybrid_and_evaluate(
     if min_fresh_in_top_k < 0:
         raise ValueError("min_fresh_in_top_k must be non-negative")
 
-    columns = ["customer_id", "article_id"]
-    train = pd.read_parquet(paths["train"], columns=columns).dropna()
-    validation = pd.read_parquet(paths["validation"], columns=columns).dropna()
+    want_recency = recency_half_life_days is not None
+    train, recency_available = read_interactions(paths["train"], want_recency)
+    validation, _ = read_interactions(paths["validation"], False)
     items = pd.read_parquet(paths["items"], columns=["article_id", "item_text"])
-    train = _positive_limit(train, max_train_rows).astype(str)
+    train = _positive_limit(train, max_train_rows)
+    train["customer_id"] = train["customer_id"].astype(str)
+    train["article_id"] = train["article_id"].astype(str)
+    effective_recency = recency_half_life_days if recency_available else None
     catalog_item_ids = set(items["article_id"].astype(str))
     training_item_ids = set(train["article_id"])
     fresh_item_ids = catalog_item_ids - training_item_ids
 
     popularity = PopularityRecommender().fit(train)
-    collaborative = CollaborativeSVD(n_components, random_state).fit(train)
+    collaborative = CollaborativeSVD(n_components, random_state).fit(
+        train, recency_half_life_days=effective_recency
+    )
     content_candidates = None if include_fresh_catalog_items else training_item_ids
     content = ContentRecommender(
         n_components=n_components,
         max_features=max_text_features,
         random_state=random_state,
-    ).fit(train, items, candidate_item_ids=content_candidates)
+    ).fit(
+        train,
+        items,
+        candidate_item_ids=content_candidates,
+        recency_half_life_days=effective_recency,
+    )
 
     truth = build_ground_truth(
         validation,
@@ -172,6 +183,7 @@ def train_hybrid_and_evaluate(
             "best_collaborative_weight": best_weight,
             "include_fresh_catalog_items": include_fresh_catalog_items,
             "min_fresh_in_top_k": min_fresh_in_top_k,
+            "recency_half_life_days": effective_recency,
         },
         "data": {
             "training_rows": len(train),
@@ -223,7 +235,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train and tune hybrid recommender")
     parser.add_argument("--processed-dir", type=Path, default=Path("data/processed"))
     parser.add_argument("--artifacts-dir", type=Path, default=Path("artifacts/hybrid"))
-    parser.add_argument("--max-train-rows", type=int, default=500_000)
+    parser.add_argument("--max-train-rows", type=int, default=0)
     parser.add_argument("--max-eval-users", type=int, default=1_000)
     parser.add_argument("--n-components", type=int, default=64)
     parser.add_argument("--max-text-features", type=int, default=20_000)
@@ -236,6 +248,15 @@ def parse_args() -> argparse.Namespace:
         help="Fit content model on full catalog to expose fresh metadata-only items.",
     )
     parser.add_argument("--min-fresh-in-top-k", type=int, default=0)
+    parser.add_argument(
+        "--recency-half-life-days",
+        type=float,
+        default=None,
+        help=(
+            "Exponentially decay interaction weight with this half-life in "
+            "days (requires the event_ts column). Disabled by default."
+        ),
+    )
     parser.add_argument("--tracking-uri", default=os.getenv("MLFLOW_TRACKING_URI"))
     parser.add_argument(
         "--experiment-name",

@@ -38,6 +38,7 @@ class ContentRecommender:
         interactions: pd.DataFrame,
         items: pd.DataFrame,
         candidate_item_ids: set[str] | None = None,
+        recency_half_life_days: float | None = None,
     ) -> "ContentRecommender":
         required_interactions = {"customer_id", "article_id"}
         required_items = {"article_id", "item_text"}
@@ -57,7 +58,17 @@ class ContentRecommender:
         if len(catalog) < 2:
             raise ValueError("At least two catalog items are required")
 
-        frame = interactions[["customer_id", "article_id"]].dropna().astype(str)
+        use_recency = (
+            recency_half_life_days is not None and "event_ts" in interactions.columns
+        )
+        columns = (
+            ["customer_id", "article_id", "event_ts"]
+            if use_recency
+            else ["customer_id", "article_id"]
+        )
+        frame = interactions[columns].dropna().copy()
+        frame["customer_id"] = frame["customer_id"].astype(str)
+        frame["article_id"] = frame["article_id"].astype(str)
         training_item_ids = set(frame["article_id"])
 
         self.item_ids_ = catalog["article_id"].to_numpy()
@@ -85,7 +96,24 @@ class ContentRecommender:
         ).astype(np.float32)
 
         frame = frame[frame["article_id"].isin(self.item_to_index_)]
-        counts = frame.groupby(["customer_id", "article_id"]).size().reset_index(name="n")
+        if use_recency:
+            event_ts = pd.to_datetime(frame["event_ts"])
+            age_days = (event_ts.max() - event_ts).dt.total_seconds() / 86_400.0
+            decay = np.log(2) / recency_half_life_days
+            frame = frame.assign(
+                _weight=np.exp(-decay * age_days.to_numpy(dtype=np.float64))
+            )
+            counts = (
+                frame.groupby(["customer_id", "article_id"])["_weight"]
+                .sum()
+                .reset_index(name="n")
+            )
+        else:
+            counts = (
+                frame.groupby(["customer_id", "article_id"])
+                .size()
+                .reset_index(name="n")
+            )
         self.user_ids_ = np.sort(counts["customer_id"].unique())
         self.user_to_index_ = {user: i for i, user in enumerate(self.user_ids_)}
         rows = counts["customer_id"].map(self.user_to_index_).to_numpy()

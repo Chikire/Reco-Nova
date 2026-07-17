@@ -154,7 +154,7 @@ def evaluate_cold_start(
     processed_dir: Path,
     artifacts_dir: Path,
     report_path: Path,
-    max_train_rows: int = 500_000,
+    max_train_rows: int = 0,
     max_eval_users: int = 1_000,
     n_components: int = 64,
     max_text_features: int = 20_000,
@@ -296,7 +296,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--processed-dir", type=Path, default=Path("data/processed"))
     parser.add_argument("--artifacts-dir", type=Path, default=Path("artifacts/cold_start"))
     parser.add_argument("--report-path", type=Path, default=Path("docs/cold_start_report.md"))
-    parser.add_argument("--max-train-rows", type=int, default=500_000)
+    parser.add_argument("--max-train-rows", type=int, default=0)
     parser.add_argument("--max-eval-users", type=int, default=1_000)
     parser.add_argument("--n-components", type=int, default=64)
     parser.add_argument("--max-text-features", type=int, default=20_000)

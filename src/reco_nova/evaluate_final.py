@@ -26,7 +26,7 @@ from reco_nova.models import (
     PopularityRecommender,
 )
 from reco_nova.tracking import log_recommender_run
-from reco_nova.train import _positive_limit, build_ground_truth
+from reco_nova.train import _positive_limit, build_ground_truth, read_interactions
 
 
 def _recommend(model: object, users: list[str], k: int) -> dict[str, list[str]]:
@@ -140,7 +140,7 @@ def evaluate_final(
     processed_dir: Path,
     artifacts_dir: Path,
     report_path: Path,
-    max_train_rows: int = 500_000,
+    max_train_rows: int = 0,
     max_eval_users: int = 1_000,
     n_components: int = 64,
     max_text_features: int = 20_000,
@@ -150,6 +150,7 @@ def evaluate_final(
     min_fresh_in_top_k: int = 0,
     bootstrap_samples: int = 1_000,
     random_state: int = 42,
+    recency_half_life_days: float | None = None,
     tracking_uri: str | None = None,
     experiment_name: str = "/Shared/reco-nova-final-evaluation",
     run_name: str | None = None,
@@ -166,23 +167,36 @@ def evaluate_final(
             raise FileNotFoundError(f"Missing {path}. Run `make preprocess` first.")
 
     columns = ["customer_id", "article_id"]
-    train = pd.read_parquet(paths["train"], columns=columns).dropna()
-    validation = pd.read_parquet(paths["validation"], columns=columns).dropna()
+    want_recency = recency_half_life_days is not None
+    train, train_has_recency = read_interactions(paths["train"], want_recency)
+    validation, val_has_recency = read_interactions(paths["validation"], want_recency)
     development = pd.concat([train, validation], ignore_index=True)
-    development = _positive_limit(development, max_train_rows).astype(str)
+    development = _positive_limit(development, max_train_rows)
+    development["customer_id"] = development["customer_id"].astype(str)
+    development["article_id"] = development["article_id"].astype(str)
+    effective_recency = (
+        recency_half_life_days if (train_has_recency and val_has_recency) else None
+    )
     items = pd.read_parquet(paths["items"], columns=["article_id", "item_text"])
     catalog_item_ids = set(items["article_id"].astype(str))
     training_item_ids = set(development["article_id"])
     fresh_item_ids = catalog_item_ids - training_item_ids
 
     popularity = PopularityRecommender().fit(development)
-    collaborative = CollaborativeSVD(n_components, random_state).fit(development)
+    collaborative = CollaborativeSVD(n_components, random_state).fit(
+        development, recency_half_life_days=effective_recency
+    )
     content_candidates = None if include_fresh_catalog_items else training_item_ids
     content = ContentRecommender(
         n_components=n_components,
         max_features=max_text_features,
         random_state=random_state,
-    ).fit(development, items, candidate_item_ids=content_candidates)
+    ).fit(
+        development,
+        items,
+        candidate_item_ids=content_candidates,
+        recency_half_life_days=effective_recency,
+    )
     hybrid = HybridRecommender(
         collaborative,
         content,
@@ -237,6 +251,7 @@ def evaluate_final(
             "min_fresh_in_top_k": min_fresh_in_top_k,
             "bootstrap_samples": bootstrap_samples,
             "random_state": random_state,
+            "recency_half_life_days": effective_recency,
         },
         "data": {
             "training_rows": len(development),
@@ -288,7 +303,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--report-path", type=Path, default=Path("docs/offline_evaluation_report.md")
     )
-    parser.add_argument("--max-train-rows", type=int, default=500_000)
+    parser.add_argument("--max-train-rows", type=int, default=0)
     parser.add_argument("--max-eval-users", type=int, default=1_000)
     parser.add_argument("--n-components", type=int, default=64)
     parser.add_argument("--max-text-features", type=int, default=20_000)
@@ -302,6 +317,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-fresh-in-top-k", type=int, default=0)
     parser.add_argument("--bootstrap-samples", type=int, default=1_000)
     parser.add_argument("--random-state", type=int, default=42)
+    parser.add_argument(
+        "--recency-half-life-days",
+        type=float,
+        default=None,
+        help=(
+            "Exponentially decay interaction weight with this half-life in "
+            "days (requires the event_ts column). Disabled by default."
+        ),
+    )
     parser.add_argument("--tracking-uri", default=os.getenv("MLFLOW_TRACKING_URI"))
     parser.add_argument(
         "--experiment-name",
