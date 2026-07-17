@@ -20,12 +20,13 @@ def test_hybrid_training_writes_comparison_and_best_config(tmp_path):
     )
     items = pd.DataFrame(
         {
-            "article_id": ["a", "b", "c", "d"],
+            "article_id": ["a", "b", "c", "d", "fresh"],
             "item_text": [
                 "red cotton shirt",
                 "blue cotton shirt",
                 "blue denim jeans",
                 "black running shoes",
+                "green cotton shirt",
             ],
         }
     )
@@ -41,6 +42,8 @@ def test_hybrid_training_writes_comparison_and_best_config(tmp_path):
         max_eval_users=10,
         k=2,
         hybrid_weights=(0.25, 0.75),
+        include_fresh_catalog_items=True,
+        min_fresh_in_top_k=1,
     )
 
     assert set(report["metrics"]) == {
@@ -50,6 +53,8 @@ def test_hybrid_training_writes_comparison_and_best_config(tmp_path):
         "hybrid_best",
     }
     assert report["configuration"]["best_collaborative_weight"] in {0.25, 0.75}
+    assert report["data"]["fresh_catalog_items"] == 1
+    assert "fresh_catalog_coverage_at_k" in report["metrics"]["hybrid_best"]
     assert (artifacts / "content_tfidf.joblib").exists()
     config = json.loads((artifacts / "best_hybrid_config.json").read_text())
     assert config["collaborative_weight"] in {0.25, 0.75}

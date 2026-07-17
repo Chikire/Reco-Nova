@@ -11,7 +11,13 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from reco_nova.evaluation import OfflineMetrics, evaluate_rankings
+from reco_nova.evaluation import (
+    OfflineMetrics,
+    evaluate_rankings,
+    fresh_catalog_coverage_at_k,
+    fresh_share_at_k,
+    users_with_fresh_hit_at_k,
+)
 from reco_nova.models import (
     CollaborativeSVD,
     ContentRecommender,
@@ -33,6 +39,24 @@ def _metric_key(metrics: OfflineMetrics) -> tuple[float, float, float]:
     return (metrics.ndcg_at_k, metrics.map_at_k, metrics.hit_rate_at_k)
 
 
+def _attach_fresh_metrics(
+    metric_dict: dict[str, int | float],
+    recommendations: dict[str, list[str]],
+    fresh_item_ids: set[str],
+    k: int,
+) -> None:
+    """Add fresh-catalog exposure metrics to one model result."""
+    metric_dict["fresh_catalog_coverage_at_k"] = fresh_catalog_coverage_at_k(
+        recommendations, fresh_item_ids, k
+    )
+    metric_dict["fresh_share_at_k"] = fresh_share_at_k(
+        recommendations, fresh_item_ids, k
+    )
+    metric_dict["users_with_fresh_hit_at_k"] = users_with_fresh_hit_at_k(
+        recommendations, fresh_item_ids, k
+    )
+
+
 def train_hybrid_and_evaluate(
     processed_dir: Path,
     artifacts_dir: Path,
@@ -43,6 +67,8 @@ def train_hybrid_and_evaluate(
     k: int = 12,
     random_state: int = 42,
     hybrid_weights: tuple[float, ...] = (0.25, 0.5, 0.75),
+    include_fresh_catalog_items: bool = False,
+    min_fresh_in_top_k: int = 0,
     tracking_uri: str | None = None,
     experiment_name: str = "/Shared/reco-nova-hybrid",
     run_name: str | None = None,
@@ -58,20 +84,26 @@ def train_hybrid_and_evaluate(
             raise FileNotFoundError(f"Missing {path}. Run `make preprocess` first.")
     if not hybrid_weights or any(not 0.0 <= weight <= 1.0 for weight in hybrid_weights):
         raise ValueError("hybrid_weights must contain values between zero and one")
+    if min_fresh_in_top_k < 0:
+        raise ValueError("min_fresh_in_top_k must be non-negative")
 
     columns = ["customer_id", "article_id"]
     train = pd.read_parquet(paths["train"], columns=columns).dropna()
     validation = pd.read_parquet(paths["validation"], columns=columns).dropna()
     items = pd.read_parquet(paths["items"], columns=["article_id", "item_text"])
     train = _positive_limit(train, max_train_rows).astype(str)
+    catalog_item_ids = set(items["article_id"].astype(str))
+    training_item_ids = set(train["article_id"])
+    fresh_item_ids = catalog_item_ids - training_item_ids
 
     popularity = PopularityRecommender().fit(train)
     collaborative = CollaborativeSVD(n_components, random_state).fit(train)
+    content_candidates = None if include_fresh_catalog_items else training_item_ids
     content = ContentRecommender(
         n_components=n_components,
         max_features=max_text_features,
         random_state=random_state,
-    ).fit(train, items, candidate_item_ids=set(train["article_id"]))
+    ).fit(train, items, candidate_item_ids=content_candidates)
 
     truth = build_ground_truth(
         validation,
@@ -92,20 +124,41 @@ def train_hybrid_and_evaluate(
         ("collaborative_svd", collaborative),
         ("content_tfidf", content),
     ):
-        result = evaluate_rankings(_recommend_users(model, evaluation_users, k), truth, k)
+        recommendations = _recommend_users(model, evaluation_users, k)
+        result = evaluate_rankings(recommendations, truth, k)
         metrics[name] = result.to_dict()
+        if include_fresh_catalog_items:
+            _attach_fresh_metrics(metrics[name], recommendations, fresh_item_ids, k)
 
     best_weight = hybrid_weights[0]
     best_metrics: OfflineMetrics | None = None
+    best_recommendations: dict[str, list[str]] | None = None
     tuning: dict[str, dict[str, int | float]] = {}
     for weight in hybrid_weights:
-        model = HybridRecommender(collaborative, content, weight)
-        result = evaluate_rankings(_recommend_users(model, evaluation_users, k), truth, k)
-        tuning[f"cf_{weight:.2f}"] = result.to_dict()
+        model = HybridRecommender(
+            collaborative,
+            content,
+            weight,
+            fresh_item_ids=fresh_item_ids,
+            min_fresh_in_top_k=min_fresh_in_top_k,
+        )
+        recommendations = _recommend_users(model, evaluation_users, k)
+        result = evaluate_rankings(recommendations, truth, k)
+        tuning_entry = result.to_dict()
+        if include_fresh_catalog_items:
+            _attach_fresh_metrics(
+                tuning_entry, recommendations, fresh_item_ids, k
+            )
+        tuning[f"cf_{weight:.2f}"] = tuning_entry
         if best_metrics is None or _metric_key(result) > _metric_key(best_metrics):
             best_weight, best_metrics = weight, result
+            best_recommendations = recommendations
     assert best_metrics is not None
     metrics["hybrid_best"] = best_metrics.to_dict()
+    if include_fresh_catalog_items and best_recommendations is not None:
+        _attach_fresh_metrics(
+            metrics["hybrid_best"], best_recommendations, fresh_item_ids, k
+        )
 
     report: dict[str, object] = {
         "configuration": {
@@ -117,12 +170,15 @@ def train_hybrid_and_evaluate(
             "random_state": random_state,
             "hybrid_weights": ",".join(map(str, hybrid_weights)),
             "best_collaborative_weight": best_weight,
+            "include_fresh_catalog_items": include_fresh_catalog_items,
+            "min_fresh_in_top_k": min_fresh_in_top_k,
         },
         "data": {
             "training_rows": len(train),
             "training_users": train["customer_id"].nunique(),
             "training_items": train["article_id"].nunique(),
             "catalog_items": len(content.item_ids_),
+            "fresh_catalog_items": len(fresh_item_ids),
             "warm_validation_users": len(truth),
         },
         "metrics": metrics,
@@ -174,6 +230,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--k", type=int, default=12)
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--hybrid-weights", type=_weights, default=(0.25, 0.5, 0.75))
+    parser.add_argument(
+        "--include-fresh-catalog-items",
+        action="store_true",
+        help="Fit content model on full catalog to expose fresh metadata-only items.",
+    )
+    parser.add_argument("--min-fresh-in-top-k", type=int, default=0)
     parser.add_argument("--tracking-uri", default=os.getenv("MLFLOW_TRACKING_URI"))
     parser.add_argument(
         "--experiment-name",
