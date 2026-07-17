@@ -152,3 +152,8 @@ deterministic tie-breakers). The best weight found is stored in
 Previously purchased items are excluded before ranking. Warm-start benchmarks
 restrict every model to the catalog observed during training; fresh-item
 exposure is measured separately to avoid future-catalog leakage.
+
+## Detailed Data Flow
+
+For the full step-by-step data transformation pipeline — from raw CSVs through
+preprocessing, training, and final evaluation — see [data_flow.md](data_flow.md).
