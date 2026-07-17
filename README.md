@@ -86,6 +86,7 @@ make train-hybrid
 make train-hybrid-fresh
 make evaluate-final
 make evaluate-final-fresh
+make evaluate-cold-start
 make remove-zip
 make test
 ```
@@ -101,59 +102,75 @@ conda env create -f environment.yml
 conda activate reco-nova
 ```
 
-2. Download and unpack Kaggle data.
+2. Configure Kaggle credentials (one-time setup). See
+[Kaggle Download Setup](#kaggle-download-setup) for full details.
+
+```bash
+pip install kaggle
+export KAGGLE_API_TOKEN="YOUR_KAGGLE_API_KEY"
+```
+
+3. Download and unpack Kaggle data.
 
 ```bash
 make download-data
 ```
 
-3. Preprocess raw files into train/val/test parquet files.
+4. Preprocess raw files into train/val/test parquet files.
 
 ```bash
 make preprocess
 ```
 
-4. Train baseline models (popularity + collaborative SVD) and evaluate on validation.
+5. Train baseline models (popularity + collaborative SVD) and evaluate on validation.
 
 ```bash
 make train-baseline
 ```
 
-5. Train and tune hybrid models on validation.
+6. Train and tune hybrid models on validation.
 
 ```bash
 make train-hybrid
 ```
 
-6. Train and tune hybrid models with fresh-item exposure enabled (validation-based).
+7. Train and tune hybrid models with fresh-item exposure enabled (validation-based).
 
 ```bash
 make train-hybrid-fresh
 ```
 
-7. Retrain on train+validation and run final held-out test evaluation.
+8. Retrain on train+validation and run final held-out test evaluation.
 
 ```bash
 make evaluate-final
 ```
 
-8. Retrain on train+validation and run final held-out test evaluation with fresh-item exposure.
+9. Retrain on train+validation and run final held-out test evaluation with fresh-item exposure.
 
 ```bash
 make evaluate-final-fresh
 ```
 
-9. Run cold-start evaluation.
+10. Run cold-start evaluation.
 
 ```bash
 make evaluate-cold-start
 ```
 
-10. Run tests.
+11. Run tests.
 
 ```bash
 make test
 ```
+
+12. Serve the API and UI.
+
+```bash
+make run-api
+make run-ui
+```
+
 
 ## Kaggle Download Setup
 
@@ -276,13 +293,13 @@ products already seen during training are removed from recommendations. A
 global popularity model provides both a comparison baseline and an unknown-user
 fallback.
 
-For laptop-friendly iteration, the command defaults to the most recent 500,000
-training rows and 1,000 warm validation users. Run the module directly to
-change these limits; a value of `0` disables the corresponding cap:
+For laptop-friendly iteration, the command evaluates on 1,000 warm validation
+users by default, while training uses all eligible rows. Run the module
+directly to cap either limit; a value of `0` uses all eligible rows or users:
 
 ```bash
 PYTHONPATH=src python -m reco_nova.train \
-  --max-train-rows 1000000 \
+  --max-train-rows 500000 \
   --max-eval-users 5000 \
   --n-components 64 \
   --k 12
