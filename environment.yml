@@ -15,12 +15,17 @@ dependencies:
   - fastapi
   - uvicorn
   - streamlit
-  - mlflow
   - faiss-cpu
   - pyarrow
   - pyyaml
+  - lightfm
+  - scikit-surprise
+  - pytest
   - pip:
+      - kaggle
       - sentence-transformers
-      - lightfm
-      - scikit-surprise
       - python-dotenv
+      # Keep MLflow on its current major line. The old conda-forge solver can
+      # select MLflow 1.2, whose generated code is incompatible with protobuf 6.
+      - mlflow>=3.1,<4
+      - databricks-sdk>=0.57
