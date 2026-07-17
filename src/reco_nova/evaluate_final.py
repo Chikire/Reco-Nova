@@ -15,6 +15,9 @@ from reco_nova.evaluation import (
     bootstrap_metric_intervals,
     catalog_coverage,
     evaluate_rankings,
+    fresh_catalog_coverage_at_k,
+    fresh_share_at_k,
+    users_with_fresh_hit_at_k,
 )
 from reco_nova.models import (
     CollaborativeSVD,
@@ -40,6 +43,7 @@ def _evaluate_model(
     k: int,
     bootstrap_samples: int,
     random_state: int,
+    fresh_item_ids: set[str] | None = None,
 ) -> dict[str, int | float]:
     metrics = evaluate_rankings(recommendations, truth, k).to_dict()
     metrics["catalog_coverage_at_k"] = catalog_coverage(
@@ -55,6 +59,16 @@ def _evaluate_model(
     for name, (lower, upper) in intervals.items():
         metrics[f"{name}_ci95_lower"] = lower
         metrics[f"{name}_ci95_upper"] = upper
+    if fresh_item_ids is not None:
+        metrics["fresh_catalog_coverage_at_k"] = fresh_catalog_coverage_at_k(
+            recommendations, fresh_item_ids, k
+        )
+        metrics["fresh_share_at_k"] = fresh_share_at_k(
+            recommendations, fresh_item_ids, k
+        )
+        metrics["users_with_fresh_hit_at_k"] = users_with_fresh_hit_at_k(
+            recommendations, fresh_item_ids, k
+        )
     return metrics
 
 
@@ -132,6 +146,8 @@ def evaluate_final(
     max_text_features: int = 20_000,
     k: int = 12,
     collaborative_weight: float = 0.75,
+    include_fresh_catalog_items: bool = False,
+    min_fresh_in_top_k: int = 0,
     bootstrap_samples: int = 1_000,
     random_state: int = 42,
     tracking_uri: str | None = None,
@@ -155,16 +171,24 @@ def evaluate_final(
     development = pd.concat([train, validation], ignore_index=True)
     development = _positive_limit(development, max_train_rows).astype(str)
     items = pd.read_parquet(paths["items"], columns=["article_id", "item_text"])
+    catalog_item_ids = set(items["article_id"].astype(str))
+    training_item_ids = set(development["article_id"])
+    fresh_item_ids = catalog_item_ids - training_item_ids
 
     popularity = PopularityRecommender().fit(development)
     collaborative = CollaborativeSVD(n_components, random_state).fit(development)
+    content_candidates = None if include_fresh_catalog_items else training_item_ids
     content = ContentRecommender(
         n_components=n_components,
         max_features=max_text_features,
         random_state=random_state,
-    ).fit(development, items, candidate_item_ids=set(development["article_id"]))
+    ).fit(development, items, candidate_item_ids=content_candidates)
     hybrid = HybridRecommender(
-        collaborative, content, collaborative_weight=collaborative_weight
+        collaborative,
+        content,
+        collaborative_weight=collaborative_weight,
+        fresh_item_ids=fresh_item_ids,
+        min_fresh_in_top_k=min_fresh_in_top_k,
     )
 
     # Test data is intentionally not used until all models and weights are frozen.
@@ -198,6 +222,7 @@ def evaluate_final(
             k,
             bootstrap_samples,
             random_state,
+            fresh_item_ids if include_fresh_catalog_items else None,
         )
 
     report: dict[str, object] = {
@@ -208,6 +233,8 @@ def evaluate_final(
             "max_text_features": max_text_features,
             "k": k,
             "collaborative_weight": collaborative_weight,
+            "include_fresh_catalog_items": include_fresh_catalog_items,
+            "min_fresh_in_top_k": min_fresh_in_top_k,
             "bootstrap_samples": bootstrap_samples,
             "random_state": random_state,
         },
@@ -215,6 +242,7 @@ def evaluate_final(
             "training_rows": len(development),
             "training_users": development["customer_id"].nunique(),
             "training_items": development["article_id"].nunique(),
+            "fresh_catalog_items": len(fresh_item_ids),
             "warm_test_users": len(truth),
         },
         "metrics": metrics,
@@ -260,6 +288,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-text-features", type=int, default=20_000)
     parser.add_argument("--k", type=int, default=12)
     parser.add_argument("--collaborative-weight", type=float, default=0.75)
+    parser.add_argument(
+        "--include-fresh-catalog-items",
+        action="store_true",
+        help="Fit content model on full catalog to expose fresh metadata-only items.",
+    )
+    parser.add_argument("--min-fresh-in-top-k", type=int, default=0)
     parser.add_argument("--bootstrap-samples", type=int, default=1_000)
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--tracking-uri", default=os.getenv("MLFLOW_TRACKING_URI"))

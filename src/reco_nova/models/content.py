@@ -57,8 +57,15 @@ class ContentRecommender:
         if len(catalog) < 2:
             raise ValueError("At least two catalog items are required")
 
+        frame = interactions[["customer_id", "article_id"]].dropna().astype(str)
+        training_item_ids = set(frame["article_id"])
+
         self.item_ids_ = catalog["article_id"].to_numpy()
         self.item_to_index_ = {item: i for i, item in enumerate(self.item_ids_)}
+        self.training_item_ids_ = {
+            item for item in training_item_ids if item in self.item_to_index_
+        }
+        self.fresh_item_ids_ = set(self.item_to_index_) - self.training_item_ids_
         self.vectorizer_ = TfidfVectorizer(
             max_features=self.max_features,
             ngram_range=(1, 2),
@@ -77,7 +84,6 @@ class ContentRecommender:
             self.svd_.fit_transform(features), norm="l2", axis=1
         ).astype(np.float32)
 
-        frame = interactions[["customer_id", "article_id"]].dropna().astype(str)
         frame = frame[frame["article_id"].isin(self.item_to_index_)]
         counts = frame.groupby(["customer_id", "article_id"]).size().reset_index(name="n")
         self.user_ids_ = np.sort(counts["customer_id"].unique())
@@ -96,27 +102,70 @@ class ContentRecommender:
         self.popularity_ = PopularityRecommender().fit(frame)
         return self
 
-    def recommend(self, user_id: str, k: int = 10) -> list[tuple[str, float]]:
-        """Return products nearest to the user's content preference centroid."""
-        if k <= 0:
-            raise ValueError("k must be greater than zero")
-        if not hasattr(self, "user_factors_"):
-            raise RuntimeError("Model must be fitted before recommendation")
+    def _score_user_items(self, user_id: str) -> tuple[np.ndarray, int] | None:
+        """Return item scores and user index for a known user."""
         user_id = str(user_id)
         if user_id not in self.user_to_index_:
-            return self.popularity_.recommend(user_id, k)
+            return None
         index = self.user_to_index_[user_id]
         scores = self.item_factors_ @ self.user_factors_[index]
         scores = np.asarray(scores).reshape(-1)
         if self.seen_[index]:
             scores[list(self.seen_[index])] = -np.inf
-        available = len(scores) - len(self.seen_[index])
+        return scores, index
+
+    def _top_k_from_scores(
+        self,
+        scores: np.ndarray,
+        k: int,
+        allowed_indices: set[int] | None = None,
+    ) -> list[tuple[str, float]]:
+        """Convert score vector to ranked item-score tuples."""
+        if allowed_indices is not None:
+            mask = np.ones(len(scores), dtype=bool)
+            if allowed_indices:
+                allowed = np.fromiter(allowed_indices, dtype=int)
+                mask[allowed] = False
+            scores[mask] = -np.inf
+        finite = np.isfinite(scores)
+        available = int(np.sum(finite))
         limit = min(k, available)
         if limit <= 0:
             return []
         candidates = np.argpartition(-scores, limit - 1)[:limit]
         ranked = candidates[np.argsort(-scores[candidates], kind="stable")]
         return [(str(self.item_ids_[i]), float(scores[i])) for i in ranked]
+
+    def recommend(self, user_id: str, k: int = 10) -> list[tuple[str, float]]:
+        """Return products nearest to the user's content preference centroid."""
+        if k <= 0:
+            raise ValueError("k must be greater than zero")
+        if not hasattr(self, "user_factors_"):
+            raise RuntimeError("Model must be fitted before recommendation")
+        scored = self._score_user_items(user_id)
+        if scored is None:
+            return self.popularity_.recommend(user_id, k)
+        scores, _ = scored
+        return self._top_k_from_scores(scores.copy(), k)
+
+    def recommend_fresh_for_user(
+        self, user_id: str, k: int = 10
+    ) -> list[tuple[str, float]]:
+        """Return top-K fresh-catalog items for a known user profile."""
+        if k <= 0:
+            raise ValueError("k must be greater than zero")
+        if not hasattr(self, "user_factors_"):
+            raise RuntimeError("Model must be fitted before recommendation")
+        scored = self._score_user_items(user_id)
+        if scored is None or not self.fresh_item_ids_:
+            return []
+        scores, _ = scored
+        fresh_indices = {
+            self.item_to_index_[item]
+            for item in self.fresh_item_ids_
+            if item in self.item_to_index_
+        }
+        return self._top_k_from_scores(scores.copy(), k, allowed_indices=fresh_indices)
 
     def recommend_from_items(
         self, article_ids: list[str], k: int = 10
