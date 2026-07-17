@@ -51,6 +51,10 @@ conda activate reco-nova
 make download-data
 make preprocess
 make train-baseline
+make train-hybrid
+make train-hybrid-fresh
+make evaluate-final
+make evaluate-final-fresh
 make test
 make remove-zip
 ```
@@ -302,6 +306,37 @@ Generated artifacts:
 - `artifacts/hybrid/best_hybrid_config.json`
 - `artifacts/hybrid/hybrid_metrics.json`
 
+Enable fresh-item exposure (metadata-only onboarding for unseen products):
+
+```bash
+make train-hybrid-fresh
+```
+
+Track the same run in Databricks MLflow:
+
+```bash
+make train-hybrid-fresh-databricks
+```
+
+Direct module command with explicit flags:
+
+```bash
+PYTHONPATH=src python -m reco_nova.train_hybrid \
+  --max-train-rows 1000000 \
+  --max-eval-users 5000 \
+  --n-components 64 \
+  --hybrid-weights 0.25,0.5,0.75 \
+  --k 12 \
+  --include-fresh-catalog-items \
+  --min-fresh-in-top-k 1
+```
+
+When enabled, the report also includes fresh-catalog exposure metrics:
+
+- `fresh_catalog_coverage_at_k`
+- `fresh_share_at_k`
+- `users_with_fresh_hit_at_k`
+
 For a fair warm-start comparison, all four approaches rank only products seen
 in the training catalog. New-item retrieval will be measured separately in the
 cold-start and multimodal evaluations.
@@ -329,6 +364,28 @@ intervals and configuration are saved to
 
 ```bash
 make evaluate-final-databricks
+```
+
+Evaluate final models with fresh-item exposure enabled:
+
+```bash
+make evaluate-final-fresh
+```
+
+Track fresh-item final evaluation in Databricks:
+
+```bash
+make evaluate-final-fresh-databricks
+```
+
+Direct module command with explicit flags:
+
+```bash
+PYTHONPATH=src python -m reco_nova.evaluate_final \
+  --k 12 \
+  --collaborative-weight 0.75 \
+  --include-fresh-catalog-items \
+  --min-fresh-in-top-k 1
 ```
 
 ## New-User Cold Start
