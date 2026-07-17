@@ -3,7 +3,7 @@ RAW_DIR := data/raw
 PROCESSED_DIR := data/processed
 ZIP_FILE := $(RAW_DIR)/h-and-m-personalized-fashion-recommendations.zip
 
-.PHONY: help download-data remove-zip preprocess train-baseline train-baseline-databricks train-hybrid train-hybrid-databricks train-hybrid-fresh train-hybrid-fresh-databricks evaluate-final evaluate-final-databricks evaluate-final-fresh evaluate-final-fresh-databricks evaluate-cold-start evaluate-cold-start-databricks run-api run-ui test
+.PHONY: help download-data remove-zip preprocess train-baseline train-baseline-databricks train-hybrid train-hybrid-databricks train-hybrid-fresh train-hybrid-fresh-databricks evaluate-final evaluate-final-databricks evaluate-final-fresh evaluate-final-fresh-databricks evaluate-cold-start evaluate-cold-start-databricks reproduce run-api run-ui test
 help:
 	@echo "Available targets:"
 	@echo "  make download-data - Download + extract H&M Kaggle competition files"
@@ -21,6 +21,7 @@ help:
 	@echo "  make evaluate-final-fresh-databricks - Track fresh-item final eval in Databricks"
 	@echo "  make evaluate-cold-start - Evaluate new-user fallback strategies"
 	@echo "  make evaluate-cold-start-databricks - Track cold-start results in Databricks"
+	@echo "  make reproduce      - Run preprocess through cold-start eval in one command"
 	@echo "  make run-api       - Start the FastAPI recommendation server"
 	@echo "  make run-ui        - Start the Streamlit product discovery experience"
 	@echo "  make test          - Run the automated test suite"
@@ -71,6 +72,9 @@ evaluate-cold-start:
 
 evaluate-cold-start-databricks:
 	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_cold_start --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/cold_start --report-path docs/cold_start_report.md --tracking-uri databricks --experiment-name /Shared/reco-nova-cold-start
+
+reproduce: preprocess train-baseline train-hybrid evaluate-final evaluate-cold-start
+	@echo "Pipeline reproduced: preprocessing, baseline, hybrid, final, and cold-start evaluation complete."
 
 run-api:
 	PYTHONPATH=$(PYTHONPATH) uvicorn reco_nova.api:app --host 0.0.0.0 --port 8000
