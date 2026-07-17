@@ -21,6 +21,8 @@ help:
 	@echo "  make evaluate-final-fresh-databricks - Track fresh-item final eval in Databricks"
 	@echo "  make evaluate-cold-start - Evaluate new-user fallback strategies"
 	@echo "  make evaluate-cold-start-databricks - Track cold-start results in Databricks"
+	@echo "  make evaluate-assistant - Evaluate conversational intent and guardrails"
+	@echo "  make reproduce      - Run preprocess through cold-start eval in one command"
 	@echo "  make evaluate-policy-impact - Simulate baseline vs hybrid policy lift"
 	@echo "  make run-api       - Start the FastAPI recommendation server"
 	@echo "  make run-ui        - Start the Streamlit product discovery experience"
@@ -73,6 +75,11 @@ evaluate-cold-start:
 evaluate-cold-start-databricks:
 	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_cold_start --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/cold_start --report-path docs/cold_start_report.md --tracking-uri databricks --experiment-name /Shared/reco-nova-cold-start
 
+evaluate-assistant:
+	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_assistant --report-path artifacts/assistant_evaluation.json
+
+reproduce: preprocess train-baseline train-hybrid evaluate-final evaluate-cold-start
+	@echo "Pipeline reproduced: preprocessing, baseline, hybrid, final, and cold-start evaluation complete."
 evaluate-policy-impact:
 	MLFLOW_TRACKING_URI= PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_policy_impact --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/policy_impact --report-path docs/policy_impact_report.md
 
