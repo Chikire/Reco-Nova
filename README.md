@@ -519,3 +519,32 @@ The command compares demographic and no-context fallbacks using NDCG, MAP, Hit
 Rate, catalog coverage, and bootstrap confidence intervals. It writes a
 permanent report with examples to `docs/cold_start_report.md` and detailed
 results to `artifacts/cold_start/cold_start_metrics.json`.
+
+## FastAPI Serving
+
+Generate the final and cold-start runtime artifacts, then start the API:
+
+```bash
+make evaluate-final
+make evaluate-cold-start
+make run-api
+```
+
+Interactive OpenAPI documentation is available at `http://localhost:8000/docs`.
+The service exposes:
+
+- `GET /health` for model readiness.
+- `POST /recommend` for known-user hybrid or anonymous cold-start results.
+- `POST /explain` for recommendations with routing strategy and reason text.
+
+Example anonymous request:
+
+```bash
+curl -X POST http://localhost:8000/recommend \
+  -H 'Content-Type: application/json' \
+  -d '{"age": 24, "club_member_status": "active", "limit": 5}'
+```
+
+Override local paths with `RECO_NOVA_ARTIFACTS_DIR` and
+`RECO_NOVA_PROCESSED_DIR`. If models cannot be loaded, health reports a degraded
+state and recommendation endpoints return HTTP 503 with a diagnostic message.
