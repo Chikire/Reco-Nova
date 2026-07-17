@@ -259,17 +259,23 @@ def evaluate_final(
     json_path = artifacts_dir / "final_evaluation.json"
     json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     report_path.parent.mkdir(parents=True, exist_ok=True)
+    previous_markdown = report_path.read_text() if report_path.exists() else None
     report_path.write_text(_markdown(report), encoding="utf-8")
     if tracking_uri:
-        report["tracking"] = log_recommender_run(
-            report,
-            artifacts_dir,
-            tracking_uri,
-            experiment_name,
-            run_name,
-            task="final-offline-evaluation",
-            artifact_path="final-evaluation",
-        )
+        try:
+            report["tracking"] = log_recommender_run(
+                report,
+                artifacts_dir,
+                tracking_uri,
+                experiment_name,
+                run_name,
+                task="final-offline-evaluation",
+                artifact_path="final-evaluation",
+            )
+        except Exception:
+            if previous_markdown is not None:
+                report_path.write_text(previous_markdown, encoding="utf-8")
+            raise
         json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         report_path.write_text(_markdown(report), encoding="utf-8")
     return report

@@ -30,8 +30,10 @@ def service():
 
 def test_health_and_known_user_recommendation():
     with TestClient(create_app(service())) as client:
+        root = client.get("/")
         health = client.get("/health")
         response = client.post("/recommend", json={"user_id": "known", "limit": 1})
+    assert root.json()["documentation"] == "/docs"
     assert health.json()["models_ready"] is True
     assert response.status_code == 200
     assert response.json()["strategy"] == "hybrid_personalized"

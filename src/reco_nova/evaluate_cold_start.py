@@ -269,17 +269,23 @@ def evaluate_cold_start(
     json_path = artifacts_dir / "cold_start_metrics.json"
     json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     report_path.parent.mkdir(parents=True, exist_ok=True)
+    previous_markdown = report_path.read_text() if report_path.exists() else None
     report_path.write_text(_markdown(report), encoding="utf-8")
     if tracking_uri:
-        report["tracking"] = log_recommender_run(
-            report,
-            artifacts_dir,
-            tracking_uri,
-            experiment_name,
-            run_name,
-            task="cold-start-evaluation",
-            artifact_path="cold-start",
-        )
+        try:
+            report["tracking"] = log_recommender_run(
+                report,
+                artifacts_dir,
+                tracking_uri,
+                experiment_name,
+                run_name,
+                task="cold-start-evaluation",
+                artifact_path="cold-start",
+            )
+        except Exception:
+            if previous_markdown is not None:
+                report_path.write_text(previous_markdown, encoding="utf-8")
+            raise
         json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         report_path.write_text(_markdown(report), encoding="utf-8")
     return report
