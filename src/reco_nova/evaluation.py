@@ -116,6 +116,63 @@ def catalog_coverage(
     return len(exposed) / catalog_size
 
 
+def fresh_catalog_coverage_at_k(
+    recommendations: Mapping[str, Sequence[str]],
+    fresh_item_ids: set[str],
+    k: int,
+) -> float:
+    """Return the fraction of fresh items exposed at least once in top-K."""
+    if k <= 0:
+        raise ValueError("k must be greater than zero")
+    if not fresh_item_ids:
+        return 0.0
+    exposed = {
+        item
+        for ranked in recommendations.values()
+        for item in _unique_top_k(ranked, k)
+        if item in fresh_item_ids
+    }
+    return len(exposed) / len(fresh_item_ids)
+
+
+def fresh_share_at_k(
+    recommendations: Mapping[str, Sequence[str]],
+    fresh_item_ids: set[str],
+    k: int,
+) -> float:
+    """Return the mean share of top-K slots occupied by fresh items."""
+    if k <= 0:
+        raise ValueError("k must be greater than zero")
+    if not recommendations or not fresh_item_ids:
+        return 0.0
+    shares = []
+    for ranked in recommendations.values():
+        top_k = _unique_top_k(ranked, k)
+        if not top_k:
+            shares.append(0.0)
+            continue
+        fresh_hits = sum(1 for item in top_k if item in fresh_item_ids)
+        shares.append(fresh_hits / len(top_k))
+    return sum(shares) / len(shares)
+
+
+def users_with_fresh_hit_at_k(
+    recommendations: Mapping[str, Sequence[str]],
+    fresh_item_ids: set[str],
+    k: int,
+) -> float:
+    """Return the fraction of users receiving at least one fresh item in top-K."""
+    if k <= 0:
+        raise ValueError("k must be greater than zero")
+    if not recommendations or not fresh_item_ids:
+        return 0.0
+    hits = 0
+    for ranked in recommendations.values():
+        if any(item in fresh_item_ids for item in _unique_top_k(ranked, k)):
+            hits += 1
+    return hits / len(recommendations)
+
+
 def bootstrap_metric_intervals(
     recommendations: Mapping[str, Sequence[str]],
     ground_truth: Mapping[str, Iterable[str]],
