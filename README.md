@@ -87,6 +87,7 @@ make train-hybrid-fresh
 make evaluate-final
 make evaluate-final-fresh
 make evaluate-cold-start
+make evaluate-policy-impact
 make remove-zip
 make test
 ```
@@ -158,13 +159,19 @@ make evaluate-final-fresh
 make evaluate-cold-start
 ```
 
-11. Run tests.
+11. Run policy-impact simulation (baseline policy vs personalized hybrid).
+
+```bash
+make evaluate-policy-impact
+```
+
+12. Run tests.
 
 ```bash
 make test
 ```
 
-12. Serve the API and UI.
+13. Serve the API and UI.
 
 ```bash
 make run-api
@@ -536,6 +543,40 @@ The command compares demographic and no-context fallbacks using NDCG, MAP, Hit
 Rate, catalog coverage, and bootstrap confidence intervals. It writes a
 permanent report with examples to `docs/cold_start_report.md` and detailed
 results to `artifacts/cold_start/cold_start_metrics.json`.
+
+## Policy Impact Simulation
+
+This experiment estimates business impact by comparing a baseline policy
+(`popularity` or `random`) against the personalized hybrid policy under a
+position-biased click simulation.
+
+Run the default comparison (popularity baseline vs personalized hybrid):
+
+```bash
+make evaluate-policy-impact
+```
+
+Generated outputs:
+
+- `artifacts/policy_impact/policy_impact_report.json`
+- `docs/policy_impact_report.md`
+
+The report includes:
+
+- Offline ranking metrics for both policies (NDCG, MAP, Hit Rate).
+- Simulated interaction outcomes (CTR, relevant CTR, session-level click rates).
+- Lift metrics showing personalized-policy gain/loss versus baseline.
+
+Direct module command with explicit flags:
+
+```bash
+PYTHONPATH=src python -m reco_nova.evaluate_policy_impact \
+  --baseline-policy popularity \
+  --max-train-rows 0 \
+  --max-eval-users 1000 \
+  --k 12 \
+  --simulation-rounds 200
+```
 
 ## FastAPI Serving
 
