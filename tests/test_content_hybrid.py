@@ -37,6 +37,32 @@ def test_content_recommender_excludes_history_and_handles_unknown_user():
     assert len(model.recommend("new", 2)) == 2
 
 
+def test_content_recommender_can_surface_fresh_items_from_metadata_only():
+    items = pd.DataFrame(
+        {
+            "article_id": ["a", "b", "fresh"],
+            "item_text": [
+                "red cotton shirt",
+                "blue denim jacket",
+                "red cotton blouse",
+            ],
+        }
+    )
+    interactions = pd.DataFrame(
+        {
+            "customer_id": ["u1", "u1", "u2", "u2"],
+            "article_id": ["a", "b", "a", "b"],
+        }
+    )
+    model = ContentRecommender(n_components=2).fit(
+        interactions,
+        items,
+        candidate_item_ids=None,
+    )
+    fresh = [item for item, _ in model.recommend_fresh_for_user("u1", 2)]
+    assert "fresh" in fresh
+
+
 def test_hybrid_normalizes_and_blends_candidate_scores():
     collaborative = StubRecommender([("a", 100.0), ("b", 50.0)])
     content = StubRecommender([("b", 0.9), ("c", 0.8)])
@@ -50,3 +76,18 @@ def test_hybrid_normalizes_and_blends_candidate_scores():
 def test_hybrid_rejects_invalid_weight():
     with pytest.raises(ValueError):
         HybridRecommender(StubRecommender([]), StubRecommender([]), 1.1)
+
+
+def test_hybrid_injects_fresh_items_when_quota_is_set():
+    collaborative = StubRecommender([("a", 0.9), ("b", 0.8), ("c", 0.7)])
+    content = StubRecommender([("a", 0.9), ("b", 0.8), ("f1", 0.6), ("f2", 0.5)])
+    model = HybridRecommender(
+        collaborative,
+        content,
+        collaborative_weight=0.8,
+        fresh_item_ids={"f1", "f2"},
+        min_fresh_in_top_k=1,
+    )
+    output = model.recommend("u1", 3)
+    recommended = [item for item, _ in output]
+    assert any(item in {"f1", "f2"} for item in recommended)

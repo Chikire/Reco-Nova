@@ -11,25 +11,56 @@ Personalized Product Recommendation Engine for Retail Use Case #05.
 
 ```text
 Reco-Nova/
+├── LICENSE
 ├── environment.yml
+├── requirements.txt
+├── Makefile
 ├── docs/
-│   └── architecture.md
+│   ├── architecture.md
+│   ├── cold_start_report.md
+│   └── offline_evaluation_report.md
 ├── data/
 │   ├── raw/
 │   └── processed/
 ├── notebooks/
+│   ├── EDA_notebook.ipynb
 │   └── content_model_notebook.ipynb
 ├── scripts/
-│   └── download_data.sh
+│   ├── download_data.sh
+│   └── test_mlflow_connection.py
 ├── src/
 │   └── reco_nova/
+│       ├── __init__.py
 │       ├── api.py
 │       ├── app.py
 │       ├── content_model.py
+│       ├── evaluate_cold_start.py
+│       ├── evaluate_final.py
 │       ├── evaluation.py
-│       └── recommender.py
+│       ├── preprocess.py
+│       ├── recommender.py
+│       ├── tracking.py
+│       ├── train.py
+│       ├── train_hybrid.py
+│       └── models/
+│           ├── __init__.py
+│           ├── cold_start.py
+│           ├── collaborative.py
+│           ├── content.py
+│           ├── hybrid.py
+│           └── popularity.py
 └── tests/
-	└── test_content_model.py
+  ├── test_cold_start.py
+  ├── test_cold_start_evaluation.py
+  ├── test_content_hybrid.py
+  ├── test_content_model.py
+  ├── test_evaluation.py
+  ├── test_final_evaluation.py
+  ├── test_hybrid_training.py
+  ├── test_models.py
+  ├── test_preprocess.py
+  ├── test_tracking.py
+  └── test_training.py
 ```
 
 ## Starter Stack
@@ -51,8 +82,77 @@ conda activate reco-nova
 make download-data
 make preprocess
 make train-baseline
-make test
+make train-hybrid
+make train-hybrid-fresh
+make evaluate-final
+make evaluate-final-fresh
 make remove-zip
+make test
+```
+
+## Recommended Run Order
+
+Follow this sequence for a clean end-to-end run:
+
+1. Create and activate the environment.
+
+```bash
+conda env create -f environment.yml
+conda activate reco-nova
+```
+
+2. Download and unpack Kaggle data.
+
+```bash
+make download-data
+```
+
+3. Preprocess raw files into train/val/test parquet files.
+
+```bash
+make preprocess
+```
+
+4. Train baseline models (popularity + collaborative SVD) and evaluate on validation.
+
+```bash
+make train-baseline
+```
+
+5. Train and tune hybrid models on validation.
+
+```bash
+make train-hybrid
+```
+
+6. Train and tune hybrid models with fresh-item exposure enabled (validation-based).
+
+```bash
+make train-hybrid-fresh
+```
+
+7. Retrain on train+validation and run final held-out test evaluation.
+
+```bash
+make evaluate-final
+```
+
+8. Retrain on train+validation and run final held-out test evaluation with fresh-item exposure.
+
+```bash
+make evaluate-final-fresh
+```
+
+9. Run cold-start evaluation.
+
+```bash
+make evaluate-cold-start
+```
+
+10. Run tests.
+
+```bash
+make test
 ```
 
 ## Kaggle Download Setup
@@ -208,21 +308,26 @@ make test
 
 ## Databricks MLflow Tracking
 
-Baseline experiments can be recorded in the Databricks-hosted MLflow tracking
-server. Databricks Free Edition users can authenticate through browser-based
-OAuth and do not need a personal access token.
+Use this section only if you want experiment tracking in a Databricks-hosted
+MLflow server. If you do not need remote tracking, skip this section and run
+the local `make` targets.
 
-First install or update the current Databricks CLI. Then copy the workspace URL
-from your browser (only the scheme and hostname, without a notebook path) and
-create a named OAuth profile:
+Baseline, hybrid, final-evaluation, and cold-start Databricks targets all
+share the same setup. Databricks Free Edition users can authenticate through
+browser-based OAuth and do not need a personal access token.
+
+1. Install or update the Databricks CLI. Then copy the workspace URL from your
+browser (only the scheme and hostname, without a notebook path) and create a
+named OAuth profile:
 
 ```bash
 databricks auth login --host "https://your-workspace.cloud.databricks.com" --profile RECO_NOVA
 ```
 
 The command opens a browser for interactive sign-in. On macOS, the short-lived
-OAuth credential is stored in Keychain rather than in this repository. Verify
-the profile and configure MLflow to use it:
+OAuth credential is stored in Keychain rather than in this repository.
+
+2. Verify the profile and configure MLflow in your current shell:
 
 ```bash
 databricks current-user me --profile RECO_NOVA
@@ -231,19 +336,29 @@ export MLFLOW_TRACKING_URI="databricks"
 export MLFLOW_EXPERIMENT_NAME="/Shared/reco-nova-baselines"
 ```
 
-Ensure the declared MLflow and Databricks dependencies are installed, then run:
+3. Ensure the declared MLflow and Databricks dependencies are installed:
 
 ```bash
 conda env update -f environment.yml
-make train-baseline-databricks
 ```
 
-If the environment was created before MLflow 3 was declared, remove the stale
-conda package before updating:
+If the environment was created before MLflow 3 was declared, remove stale
+packages before updating:
 
 ```bash
 conda remove -n reco-nova mlflow databricks-cli -y
 conda env update -n reco-nova -f environment.yml
+```
+
+4. Run any Databricks-enabled target (examples):
+
+```bash
+make train-baseline-databricks
+make train-hybrid-databricks
+make train-hybrid-fresh-databricks
+make evaluate-final-databricks
+make evaluate-final-fresh-databricks
+make evaluate-cold-start-databricks
 ```
 
 Each run records:
@@ -273,11 +388,9 @@ Train and tune locally:
 make train-hybrid
 ```
 
-Track the comparison and weight sweep in Databricks MLflow:
+If you want remote tracking, run the Databricks variant:
 
 ```bash
-export DATABRICKS_CONFIG_PROFILE="RECO_NOVA"
-export MLFLOW_TRACKING_URI="databricks"
 make train-hybrid-databricks
 ```
 
@@ -302,6 +415,37 @@ Generated artifacts:
 - `artifacts/hybrid/best_hybrid_config.json`
 - `artifacts/hybrid/hybrid_metrics.json`
 
+Enable fresh-item exposure (metadata-only onboarding for unseen products):
+
+```bash
+make train-hybrid-fresh
+```
+
+If you want remote tracking for this run, use:
+
+```bash
+make train-hybrid-fresh-databricks
+```
+
+Direct module command with explicit flags:
+
+```bash
+PYTHONPATH=src python -m reco_nova.train_hybrid \
+  --max-train-rows 1000000 \
+  --max-eval-users 5000 \
+  --n-components 64 \
+  --hybrid-weights 0.25,0.5,0.75 \
+  --k 12 \
+  --include-fresh-catalog-items \
+  --min-fresh-in-top-k 1
+```
+
+When enabled, the report also includes fresh-catalog exposure metrics:
+
+- `fresh_catalog_coverage_at_k`
+- `fresh_share_at_k`
+- `users_with_fresh_hit_at_k`
+
 For a fair warm-start comparison, all four approaches rank only products seen
 in the training catalog. New-item retrieval will be measured separately in the
 cold-start and multimodal evaluations.
@@ -325,20 +469,49 @@ keeps the selected `0.75` collaborative hybrid weight fixed, and reports:
 
 The permanent table is written to `docs/offline_evaluation_report.md`; detailed
 intervals and configuration are saved to
-`artifacts/final/final_evaluation.json`. Track the final benchmark with:
+`artifacts/final/final_evaluation.json`. If you want remote tracking, run:
 
 ```bash
 make evaluate-final-databricks
+```
+
+Evaluate final models with fresh-item exposure enabled:
+
+```bash
+make evaluate-final-fresh
+```
+
+If you want remote tracking for fresh-item final evaluation, run:
+
+```bash
+make evaluate-final-fresh-databricks
+```
+
+Direct module command with explicit flags:
+
+```bash
+PYTHONPATH=src python -m reco_nova.evaluate_final \
+  --k 12 \
+  --collaborative-weight 0.75 \
+  --include-fresh-catalog-items \
+  --min-fresh-in-top-k 1
 ```
 
 ## New-User Cold Start
 
 Unknown users follow an explainable fallback hierarchy: recent session items,
 age-band and membership popularity, preferred product group, then global
-popularity. Evaluate genuinely unseen test users with:
+popularity.
+
+Run local cold-start evaluation with:
 
 ```bash
 make evaluate-cold-start
+```
+
+If you want remote tracking for cold-start evaluation, run:
+
+```bash
 make evaluate-cold-start-databricks
 ```
 

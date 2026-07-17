@@ -3,7 +3,7 @@ RAW_DIR := data/raw
 PROCESSED_DIR := data/processed
 ZIP_FILE := $(RAW_DIR)/h-and-m-personalized-fashion-recommendations.zip
 
-.PHONY: help download-data remove-zip preprocess train-baseline train-baseline-databricks train-hybrid train-hybrid-databricks evaluate-final evaluate-final-databricks evaluate-cold-start evaluate-cold-start-databricks run-api test
+.PHONY: help download-data remove-zip preprocess train-baseline train-baseline-databricks train-hybrid train-hybrid-databricks train-hybrid-fresh train-hybrid-fresh-databricks evaluate-final evaluate-final-databricks evaluate-final-fresh evaluate-final-fresh-databricks evaluate-cold-start evaluate-cold-start-databricks test
 help:
 	@echo "Available targets:"
 	@echo "  make download-data - Download + extract H&M Kaggle competition files"
@@ -13,8 +13,12 @@ help:
 	@echo "  make train-baseline-databricks - Train and track the run in Databricks MLflow"
 	@echo "  make train-hybrid   - Train, tune, and evaluate content + hybrid models"
 	@echo "  make train-hybrid-databricks - Track hybrid comparison in Databricks MLflow"
+	@echo "  make train-hybrid-fresh - Train hybrid with fresh-item exposure enabled"
+	@echo "  make train-hybrid-fresh-databricks - Track fresh-item hybrid run in Databricks"
 	@echo "  make evaluate-final - Evaluate frozen models on the held-out test split"
 	@echo "  make evaluate-final-databricks - Track final test metrics in Databricks"
+	@echo "  make evaluate-final-fresh - Final held-out eval with fresh-item exposure"
+	@echo "  make evaluate-final-fresh-databricks - Track fresh-item final eval in Databricks"
 	@echo "  make evaluate-cold-start - Evaluate new-user fallback strategies"
 	@echo "  make evaluate-cold-start-databricks - Track cold-start results in Databricks"
 	@echo "  make run-api       - Start the FastAPI recommendation server"
@@ -43,11 +47,23 @@ train-hybrid:
 train-hybrid-databricks:
 	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.train_hybrid --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/hybrid --tracking-uri databricks --experiment-name /Shared/reco-nova-hybrid
 
+train-hybrid-fresh:
+	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.train_hybrid --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/hybrid --include-fresh-catalog-items --min-fresh-in-top-k 1
+
+train-hybrid-fresh-databricks:
+	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.train_hybrid --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/hybrid --include-fresh-catalog-items --min-fresh-in-top-k 1 --tracking-uri databricks --experiment-name /Shared/reco-nova-hybrid
+
 evaluate-final:
 	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_final --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/final --report-path docs/offline_evaluation_report.md
 
 evaluate-final-databricks:
 	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_final --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/final --report-path docs/offline_evaluation_report.md --tracking-uri databricks --experiment-name /Shared/reco-nova-final-evaluation
+
+evaluate-final-fresh:
+	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_final --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/final --report-path docs/offline_evaluation_report.md --include-fresh-catalog-items --min-fresh-in-top-k 1
+
+evaluate-final-fresh-databricks:
+	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_final --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/final --report-path docs/offline_evaluation_report.md --include-fresh-catalog-items --min-fresh-in-top-k 1 --tracking-uri databricks --experiment-name /Shared/reco-nova-final-evaluation
 
 evaluate-cold-start:
 	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_cold_start --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/cold_start --report-path docs/cold_start_report.md

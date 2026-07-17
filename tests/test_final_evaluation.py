@@ -24,12 +24,13 @@ def test_final_evaluation_writes_json_markdown_and_models(tmp_path):
     )
     items = pd.DataFrame(
         {
-            "article_id": ["a", "b", "c", "d"],
+            "article_id": ["a", "b", "c", "d", "fresh"],
             "item_text": [
                 "red cotton shirt",
                 "blue cotton shirt",
                 "blue denim jeans",
                 "black running shoes",
+                "green cotton shirt",
             ],
         }
     )
@@ -50,6 +51,8 @@ def test_final_evaluation_writes_json_markdown_and_models(tmp_path):
         max_eval_users=10,
         k=2,
         bootstrap_samples=50,
+        include_fresh_catalog_items=True,
+        min_fresh_in_top_k=1,
     )
 
     assert report["data"]["warm_test_users"] == 3
@@ -59,6 +62,8 @@ def test_final_evaluation_writes_json_markdown_and_models(tmp_path):
         "content_tfidf",
         "hybrid_frozen",
     }
+    assert report["data"]["fresh_catalog_items"] == 1
+    assert "fresh_share_at_k" in report["metrics"]["hybrid_frozen"]
     assert "Catalog Coverage@K" in report_path.read_text()
     saved = json.loads((artifacts / "final_evaluation.json").read_text())
     assert saved["configuration"]["collaborative_weight"] == 0.75
