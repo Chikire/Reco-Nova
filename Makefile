@@ -3,7 +3,7 @@ RAW_DIR := data/raw
 PROCESSED_DIR := data/processed
 ZIP_FILE := $(RAW_DIR)/h-and-m-personalized-fashion-recommendations.zip
 
-.PHONY: help download-data remove-zip preprocess train-baseline train-baseline-databricks train-hybrid train-hybrid-databricks train-hybrid-fresh train-hybrid-fresh-databricks evaluate-final evaluate-final-databricks evaluate-final-fresh evaluate-final-fresh-databricks evaluate-cold-start evaluate-cold-start-databricks evaluate-policy-impact run-api run-ui test
+.PHONY: help download-data remove-zip preprocess train-baseline train-baseline-databricks train-hybrid train-hybrid-databricks train-hybrid-fresh train-hybrid-fresh-databricks evaluate-final evaluate-final-databricks evaluate-final-fresh evaluate-final-fresh-databricks evaluate-cold-start evaluate-cold-start-databricks evaluate-policy-impact evaluate-policy-impact-databricks run-api run-ui test warm-models
 help:
 	@echo "Available targets:"
 	@echo "  make download-data - Download + extract H&M Kaggle competition files"
@@ -24,10 +24,11 @@ help:
 	@echo "  make evaluate-assistant - Evaluate conversational intent and guardrails"
 	@echo "  make reproduce      - Run preprocess through cold-start eval in one command"
 	@echo "  make evaluate-policy-impact - Simulate baseline vs hybrid policy lift"
+	@echo "  make evaluate-policy-impact-databricks - Track policy-impact simulation in Databricks"
 	@echo "  make run-api       - Start the FastAPI recommendation server"
 	@echo "  make run-ui        - Start the Streamlit product discovery experience"
-	@echo "  make test          - Run the automated test suite"
-	
+	@echo "  make warm-models   - Pre-download SentenceTransformer model weights (notebook only)"
+
 download-data:
 	mkdir -p $(RAW_DIR)
 	bash scripts/download_data.sh -p $(RAW_DIR)
@@ -70,10 +71,10 @@ evaluate-final-fresh-databricks:
 	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_final --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/final --report-path docs/offline_evaluation_report.md --include-fresh-catalog-items --min-fresh-in-top-k 1 --tracking-uri databricks --experiment-name /Shared/reco-nova-final-evaluation
 
 evaluate-cold-start:
-	MLFLOW_TRACKING_URI= PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_cold_start --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/cold_start --report-path docs/cold_start_report.md
+	MLFLOW_TRACKING_URI= conda run -n reco-nova PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_cold_start --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/cold_start --report-path docs/cold_start_report.md
 
 evaluate-cold-start-databricks:
-	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_cold_start --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/cold_start --report-path docs/cold_start_report.md --tracking-uri databricks --experiment-name /Shared/reco-nova-cold-start
+	conda run -n reco-nova PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_cold_start --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/cold_start --report-path docs/cold_start_report.md --tracking-uri databricks --experiment-name /Shared/reco-nova-cold-start
 
 evaluate-assistant:
 	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_assistant --report-path artifacts/assistant_evaluation.json
@@ -83,11 +84,20 @@ reproduce: preprocess train-baseline train-hybrid evaluate-final evaluate-cold-s
 evaluate-policy-impact:
 	MLFLOW_TRACKING_URI= PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_policy_impact --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/policy_impact --report-path docs/policy_impact_report.md
 
+evaluate-policy-impact-databricks:
+	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_policy_impact --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/policy_impact --report-path docs/policy_impact_report.md --tracking-uri databricks --experiment-name /Shared/reco-nova-policy-impact
+
 run-api:
-	PYTHONPATH=$(PYTHONPATH) uvicorn reco_nova.api:app --host 0.0.0.0 --port 8000
+	@lsof -ti TCP:8000 | xargs kill -9 2>/dev/null || true
+	@xattr -cr artifacts/ 2>/dev/null || true
+	RECO_NOVA_ARTIFACTS_DIR=$(CURDIR)/artifacts RECO_NOVA_PROCESSED_DIR=$(CURDIR)/data/processed conda run -n reco-nova PYTHONPATH=$(PYTHONPATH) python -m uvicorn reco_nova.api:app --host 0.0.0.0 --port 8000
 
 run-ui:
-	PYTHONPATH=$(PYTHONPATH) streamlit run src/reco_nova/app.py --server.port 8501
+	RECO_NOVA_ARTIFACTS_DIR=$(CURDIR)/artifacts RECO_NOVA_PROCESSED_DIR=$(CURDIR)/data/processed conda run -n reco-nova PYTHONPATH=$(PYTHONPATH) python -m streamlit run src/reco_nova/app.py --server.port 8501
 
 test:
 	PYTHONPATH=$(PYTHONPATH) python -m pytest -q
+
+warm-models:
+	PYTHONPATH=$(PYTHONPATH) python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2'); print('Model cached.')"
+

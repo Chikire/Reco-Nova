@@ -62,11 +62,19 @@ class RecommendationService:
     cold_start: ColdStartRecommender
     known_users: set[str]
     metadata: dict[str, dict[str, object]]
+    prices: dict[str, float] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.prices is None:
+            self.prices = {}
 
     @classmethod
     def load(cls, artifacts_dir: Path, processed_dir: Path) -> "RecommendationService":
         final_dir = artifacts_dir / "final"
         cold_dir = artifacts_dir / "cold_start"
+        # Models are loaded in a background thread (see create_app lifespan).
+        # Plain joblib.load is used; mmap_mode provides no benefit for
+        # class-hierarchy pickles (scikit-learn / surprise objects).
         collaborative = joblib.load(final_dir / "collaborative_svd.joblib")
         content = joblib.load(final_dir / "content_tfidf.joblib")
         cold_start = joblib.load(cold_dir / "cold_start.joblib")
@@ -87,7 +95,33 @@ class RecommendationService:
         items = pd.read_parquet(processed_dir / "items_clean.parquet", columns=columns)
         items["article_id"] = items["article_id"].astype(str)
         metadata = items.set_index("article_id").to_dict(orient="index")
-        return cls(hybrid, cold_start, set(collaborative.user_ids_), metadata)
+        # Compute median price per article from training interactions.
+        # Raw values are normalized; multiply by 1000 to approximate USD.
+        # Cache result alongside models so startup only reads parquet once.
+        prices: dict[str, float] = {}
+        prices_cache = artifacts_dir / "prices.json"
+        if prices_cache.exists():
+            prices = json.loads(prices_cache.read_text())
+        else:
+            interactions_path = processed_dir / "interactions_train.parquet"
+            if interactions_path.exists():
+                tx = pd.read_parquet(
+                    interactions_path, columns=["article_id", "price"]
+                )
+                tx["article_id"] = tx["article_id"].astype(str)
+                prices = (
+                    tx.groupby("article_id")["price"]
+                    .median()
+                    .mul(1000)
+                    .round(0)
+                    .astype(int)
+                    .to_dict()
+                )
+                try:
+                    prices_cache.write_text(json.dumps(prices))
+                except OSError:
+                    pass
+        return cls(hybrid, cold_start, set(collaborative.user_ids_), metadata, prices)
 
     def recommend(self, payload: RecommendationRequest) -> RecommendationResponse:
         if payload.user_id and payload.user_id in self.known_users:
@@ -154,15 +188,21 @@ class RecommendationService:
             recommendations=products,
         )
 
-    def search_catalog(self, query: str, limit: int) -> RecommendationResponse | None:
+    def search_catalog(
+        self, query: str, limit: int, budget: float | None = None
+    ) -> RecommendationResponse | None:
         """Find concrete product types in catalog text, ranked by purchase popularity."""
         stopwords = {
             "i", "me", "my", "want", "need", "find", "show", "give", "recommend",
             "a", "an", "the", "some", "please", "product", "products", "item", "items",
             "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+            "under", "below", "above", "over", "less", "than", "more", "budget",
+            "price", "cheap", "expensive", "affordable", "max", "maximum",
+            "up", "to", "within", "for", "with", "or", "and", "in", "at", "of",
+            "is", "are", "have", "has", "can", "do", "not", "no",
         }
         tokens = [
-            token for token in re.findall(r"[a-z0-9]+", query.lower())
+            token for token in re.findall(r"[a-z]+", query.lower())
             if token not in stopwords and len(token) > 1
         ]
         if not tokens:
@@ -184,6 +224,7 @@ class RecommendationService:
             (article_id, float(popularity.get(article_id, 0.0)))
             for article_id, item in self.metadata.items()
             if matches_taxonomy(item)
+            and (budget is None or self.prices.get(article_id, 0) <= budget)
         ]
         ranked = [
             (article_id, score)
@@ -205,17 +246,19 @@ class RecommendationService:
                     score=score,
                     product_name=_optional(item.get("prod_name")),
                     product_group=_optional(item.get("product_group_name")),
+                    colour=f"~${self.prices[article_id]}" if article_id in self.prices else None,
                     description=_optional(item.get("item_text"))
                     or _optional(item.get("detail_desc")),
                     image_path=_optional(item.get("image_path")),
-                    reason=f"Matches your request for “{query.strip()}”.",
+                    reason=f"Matches your request for \u201c{query.strip()}\u201d.",
                     signals={"catalog_text_match": 1.0},
                 )
             )
+        budget_note = f" under ${int(budget)}" if budget is not None else ""
         return RecommendationResponse(
             user_id=None,
             strategy="catalog_text_search",
-            explanation=f"Popular catalog products matching “{query.strip()}”.",
+            explanation=f"Popular catalog products matching \u201c{query.strip()}\u201d{budget_note}.",
             recommendations=products,
         )
 
@@ -249,16 +292,36 @@ def _optional(value: object) -> str | None:
 def create_app(service: RecommendationService | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        import threading
         app.state.service = service
         app.state.load_error = None
+        app.state.loading = False
         if app.state.service is None:
-            try:
-                app.state.service = RecommendationService.load(
-                    Path(os.getenv("RECO_NOVA_ARTIFACTS_DIR", "artifacts")),
-                    Path(os.getenv("RECO_NOVA_PROCESSED_DIR", "data/processed")),
-                )
-            except Exception as exc:  # health must remain available for diagnosis
-                app.state.load_error = str(exc)
+            app.state.loading = True
+
+            def _load() -> None:
+                try:
+                    repo_root = Path(__file__).resolve().parents[2]
+                    app.state.service = RecommendationService.load(
+                        Path(
+                            os.getenv(
+                                "RECO_NOVA_ARTIFACTS_DIR",
+                                str(repo_root / "artifacts"),
+                            )
+                        ),
+                        Path(
+                            os.getenv(
+                                "RECO_NOVA_PROCESSED_DIR",
+                                str(repo_root / "data" / "processed"),
+                            )
+                        ),
+                    )
+                except Exception as exc:
+                    app.state.load_error = str(exc)
+                finally:
+                    app.state.loading = False
+
+            threading.Thread(target=_load, daemon=True).start()
         yield
 
     api = FastAPI(
@@ -278,10 +341,20 @@ def create_app(service: RecommendationService | None = None) -> FastAPI:
     @api.get("/health", response_model=HealthResponse)
     def health(request: Request) -> HealthResponse:
         is_ready = request.app.state.service is not None
+        loading = getattr(request.app.state, "loading", False)
+        if is_ready:
+            detail = "Models loaded"
+            status = "ok"
+        elif loading:
+            detail = "Models loading in background — check back in a moment"
+            status = "loading"
+        else:
+            detail = str(request.app.state.load_error)
+            status = "degraded"
         return HealthResponse(
-            status="ok" if is_ready else "degraded",
+            status=status,
             models_ready=is_ready,
-            detail="Models loaded" if is_ready else str(request.app.state.load_error),
+            detail=detail,
         )
 
     @api.get("/")
@@ -316,10 +389,23 @@ def create_app(service: RecommendationService | None = None) -> FastAPI:
 
         def recommend(values: dict[str, object]) -> dict[str, object]:
             catalog_query = str(values.pop("catalog_query", ""))
+            budget = values.pop("max_budget", None)
+            budget_f = float(budget) if budget is not None else None
             limit = int(values.get("limit", 6))
-            result = service.search_catalog(catalog_query, limit) if catalog_query else None
-            if result is None:
-                result = service.recommend(RecommendationRequest.model_validate(values))
+            result = (
+                service.search_catalog(catalog_query, limit, budget=budget_f)
+                if catalog_query
+                else None
+            )
+            if result is None or not result.recommendations:
+                result = service.recommend(
+                    RecommendationRequest.model_validate(values)
+                )
+                if budget_f is not None and service.prices:
+                    result.recommendations = [
+                        r for r in result.recommendations
+                        if service.prices.get(r.article_id, 0) <= budget_f
+                    ]
             return result.model_dump()
 
         return ShoppingAssistant(recommend, groups).chat(payload)

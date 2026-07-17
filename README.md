@@ -1,660 +1,672 @@
 # Reco-Nova
 
-Personalized Product Recommendation Engine for Retail Use Case #05.
+Personalized Product Recommendation Engine — Hackathon Retail Use Case #05.
 
-## Collaborators
+> **Team:** Chikire Aku-Ibe · Ssemakula Peter Wasswa
 
-- Chikire Aku-Ibe
-- Ssemakula Peter Wasswa
+---
 
-## Project Structure
+## Table of Contents
+
+1. [What This Project Does](#1-what-this-project-does)
+2. [Project Structure](#2-project-structure)
+3. [Prerequisites](#3-prerequisites)
+4. [Step-by-Step Setup](#4-step-by-step-setup)
+   - [Step 1 — Create the Conda environment](#step-1--create-the-conda-environment)
+   - [Step 2 — Configure Kaggle credentials](#step-2--configure-kaggle-credentials)
+   - [Step 3 — Download the H&M dataset](#step-3--download-the-hm-dataset)
+   - [Step 4 — Preprocess raw data](#step-4--preprocess-raw-data)
+   - [Step 5 — Train baseline models](#step-5--train-baseline-models)
+   - [Step 6 — Train the hybrid recommender](#step-6--train-the-hybrid-recommender)
+   - [Step 7 — Final held-out evaluation](#step-7--final-held-out-evaluation)
+   - [Step 8 — Cold-start evaluation](#step-8--cold-start-evaluation)
+   - [Step 9 — Policy-impact simulation](#step-9--policy-impact-simulation)
+   - [Step 10 — Run the API and UI](#step-10--run-the-api-and-ui)
+5. [Databricks MLflow Tracking](#5-databricks-mlflow-tracking)
+6. [Conversational Assistant (Ollama)](#6-conversational-assistant-ollama)
+7. [Running Tests](#7-running-tests)
+8. [Reproduce Everything in One Command](#8-reproduce-everything-in-one-command)
+9. [Reference — All Make Targets](#9-reference--all-make-targets)
+10. [Reference — Direct Module Flags](#10-reference--direct-module-flags)
+
+---
+
+## 1. What This Project Does
+
+Reco-Nova is a three-layer hybrid recommendation engine trained on the Kaggle
+H&M Fashion dataset (7.8 M purchase interactions, 105 K products, 1.4 M customers).
+
+| Layer | Model | Signal |
+|---|---|---|
+| Collaborative | Truncated SVD (64 components) | User–item purchase matrix |
+| Content | TF-IDF bigrams + SVD compression | Product metadata text |
+| Hybrid | Score-normalized weighted blend | Best of both, tuned on validation |
+
+Additional capabilities:
+
+- **Cold-start**: 4-level fallback for anonymous users (session → demographics → category → global)
+- **Explainability**: per-item `signals`, `evidence_article_ids`, and `reason` text on every response
+- **A/B simulation**: position-biased CTR comparison of popularity baseline vs. hybrid
+- **GenAI assistant**: conversational shopping via Ollama (regex fallback when Ollama is offline)
+- **FastAPI** serving layer + **Streamlit** product-discovery UI
+
+---
+
+## 2. Project Structure
 
 ```text
 Reco-Nova/
-├── LICENSE
-├── environment.yml
+├── Makefile                        ← all run targets
+├── environment.yml                 ← conda environment spec
 ├── requirements.txt
-├── Makefile
 ├── docs/
 │   ├── architecture.md
+│   ├── data_flow.md
+│   ├── explainability.md
+│   ├── offline_evaluation_report.md
 │   ├── cold_start_report.md
-│   └── offline_evaluation_report.md
-├── data/
-│   ├── raw/
-│   └── processed/
+│   └── policy_impact_report.md
 ├── notebooks/
 │   ├── EDA_notebook.ipynb
 │   └── content_model_notebook.ipynb
 ├── scripts/
 │   ├── download_data.sh
 │   └── test_mlflow_connection.py
+├── data/
+│   ├── raw/                        ← Kaggle CSV + images (git-ignored)
+│   └── processed/                  ← parquet outputs (git-ignored)
+├── artifacts/                      ← trained models + metrics (git-ignored)
+│   ├── hybrid/
+│   ├── final/
+│   ├── cold_start/
+│   └── policy_impact/
 ├── src/
 │   └── reco_nova/
-│       ├── __init__.py
-│       ├── api.py
-│       ├── app.py
-│       ├── content_model.py
-│       ├── evaluate_cold_start.py
-│       ├── evaluate_final.py
-│       ├── evaluation.py
+│       ├── api.py                  ← FastAPI app
+│       ├── app.py                  ← Streamlit UI
+│       ├── assistant.py            ← conversational shopping assistant
 │       ├── preprocess.py
-│       ├── recommender.py
-│       ├── tracking.py
-│       ├── train.py
+│       ├── train.py                ← baseline models
 │       ├── train_hybrid.py
+│       ├── evaluate_final.py
+│       ├── evaluate_cold_start.py
+│       ├── evaluate_policy_impact.py
+│       ├── evaluate_assistant.py
+│       ├── evaluation.py           ← NDCG / MAP / Hit Rate
+│       ├── tracking.py             ← MLflow logging
 │       └── models/
-│           ├── __init__.py
-│           ├── cold_start.py
-│           ├── collaborative.py
-│           ├── content.py
-│           ├── hybrid.py
-│           └── popularity.py
+│           ├── collaborative.py    ← CollaborativeSVD
+│           ├── content.py          ← ContentRecommender (TF-IDF)
+│           ├── hybrid.py           ← HybridRecommender
+│           ├── cold_start.py       ← ColdStartRecommender
+│           └── popularity.py       ← PopularityRecommender
 └── tests/
-  ├── test_cold_start.py
-  ├── test_cold_start_evaluation.py
-  ├── test_content_hybrid.py
-  ├── test_content_model.py
-  ├── test_evaluation.py
-  ├── test_final_evaluation.py
-  ├── test_hybrid_training.py
-  ├── test_models.py
-  ├── test_preprocess.py
-  ├── test_tracking.py
-  └── test_training.py
 ```
 
-## Starter Stack
+---
 
-- Python data stack with `pandas`, `scikit-learn`, `scipy`, `mlflow`, and `faiss-cpu`
-- Recommendation modeling with `surprise`, `lightfm`, and `sentence-transformers`
-- Serving options for `FastAPI` and `Streamlit`
+## 3. Prerequisites
 
-## Quick Start
+| Requirement | Version | Notes |
+|---|---|---|
+| conda | ≥ 23 | Anaconda or Miniconda |
+| Python | 3.11 | Pinned in `environment.yml` |
+| Kaggle account | — | Free; needed to download dataset |
+| Ollama | latest | Only for the GenAI assistant; optional |
+| Databricks workspace | — | Only for remote MLflow tracking; optional |
+
+---
+
+## 4. Step-by-Step Setup
+
+### Step 1 — Create the Conda environment
 
 ```bash
 conda env create -f environment.yml
 conda activate reco-nova
 ```
 
-## One-Command Run Targets
+This installs all Python dependencies: `pandas`, `scikit-learn`, `scipy`,
+`faiss-cpu`, `sentence-transformers`, `fastapi`, `uvicorn`, `streamlit`,
+`mlflow`, and more.
+
+> **Updating an existing environment**
+> ```bash
+> conda env update -n reco-nova -f environment.yml --prune
+> ```
+
+---
+
+### Step 2 — Configure Kaggle credentials
+
+You need a Kaggle account and a Kaggle API token to download the dataset.
+
+**2a. Get your API token**
+
+1. Log in at [kaggle.com](https://www.kaggle.com)
+2. Go to **Account → API → Create New Token**
+3. A `kaggle.json` file is downloaded — it contains your username and key
+
+**2b. Set the environment variable** (recommended — keeps secrets out of files)
+
+```bash
+export KAGGLE_API_TOKEN="your_api_key_here"
+```
+
+Add this to `~/.zshrc` or `~/.bashrc` to make it permanent.
+
+**2c. Accept the competition rules** (one-time, required before download)
+
+Visit: https://www.kaggle.com/competitions/h-and-m-personalized-fashion-recommendations
+
+Click **Join Competition** and accept the rules.
+
+---
+
+### Step 3 — Download the H&M dataset
 
 ```bash
 make download-data
-make preprocess
-make train-baseline
-make train-hybrid
-make train-hybrid-fresh
-make evaluate-final
-make evaluate-final-fresh
-make evaluate-cold-start
-make evaluate-policy-impact
-make remove-zip
-make test
 ```
 
-## Recommended Run Order
+This runs `scripts/download_data.sh` which downloads and extracts the Kaggle
+competition zip into `data/raw/`. After it completes, confirm these files exist:
 
-Follow this sequence for a clean end-to-end run:
-
-1. Create and activate the environment.
-
-```bash
-conda env create -f environment.yml
-conda activate reco-nova
+```
+data/raw/
+├── articles.csv
+├── customers.csv
+├── transactions_train.csv
+├── sample_submission.csv
+└── images/          ← ~105K product JPEG files
 ```
 
-2. Configure Kaggle credentials (one-time setup). See
-[Kaggle Download Setup](#kaggle-download-setup) for full details.
+> **Manual download (no CLI)**
+> Download the zip from https://www.kaggle.com/competitions/h-and-m-personalized-fashion-recommendations/data,
+> place it in `data/raw/`, then extract:
+> ```bash
+> unzip data/raw/h-and-m-personalized-fashion-recommendations.zip -d data/raw
+> ```
 
-```bash
-pip install kaggle
-export KAGGLE_API_TOKEN="YOUR_KAGGLE_API_KEY"
-```
+---
 
-3. Download and unpack Kaggle data.
-
-```bash
-make download-data
-```
-
-4. Preprocess raw files into train/val/test parquet files.
+### Step 4 — Preprocess raw data
 
 ```bash
 make preprocess
 ```
 
-5. Train baseline models (popularity + collaborative SVD) and evaluate on validation.
+What this does:
+
+- Normalizes text fields and parses transaction timestamps
+- Imputes missing customer ages with the training-set median
+- Builds `item_text` — a single string per article concatenating all categorical fields
+- Resolves `image_path` for articles that have a matching JPEG in `data/raw/images/`
+- Performs a **temporal split** on the most-recent 6-month window:
+  - `train` — months 1–5 plus weeks 1–2 of month 6
+  - `val` — week 3 of month 6
+  - `test` — week 4 of month 6 (held out; not touched until final evaluation)
+- Builds `customer_map` and `item_map` from the training split only (no leakage)
+
+Outputs written to `data/processed/`:
+
+```
+interactions_train.parquet   (~7.8 M rows)
+interactions_val.parquet     (~930 K rows)
+interactions_test.parquet    (~250 K rows)
+interactions_clean.parquet
+items_clean.parquet
+customers_clean.parquet
+customer_map.parquet
+item_map.parquet
+preprocess_summary.json
+```
+
+---
+
+### Step 5 — Train baseline models
 
 ```bash
 make train-baseline
 ```
 
-6. Train and tune hybrid models on validation.
+Trains two models on `interactions_train.parquet` and evaluates on `interactions_val.parquet`:
+
+| Model | Algorithm |
+|---|---|
+| `PopularityRecommender` | Interaction count rank |
+| `CollaborativeSVD` | Randomized TruncatedSVD (64 components) on sparse implicit-feedback matrix |
+
+Evaluation uses 1,000 warm validation users by default. Metrics: NDCG@12, MAP@12, Hit Rate@12.
+
+Outputs:
+
+```
+artifacts/popularity.joblib
+artifacts/collaborative_svd.joblib
+artifacts/baseline_metrics.json
+```
+
+---
+
+### Step 6 — Train the hybrid recommender
 
 ```bash
 make train-hybrid
 ```
 
-7. Train and tune hybrid models with fresh-item exposure enabled (validation-based).
+Adds a content-based model and tunes the hybrid blend weight:
 
-```bash
-make train-hybrid-fresh
+1. Fits `ContentRecommender` — TF-IDF bigrams (20 K features) → SVD (64 components) on `item_text`
+2. Retrains popularity and SVD on the same split
+3. Grid-searches `collaborative_weight` over {0.25, 0.50, 0.75} on validation NDCG@12
+4. Saves the best weight to `artifacts/hybrid/best_hybrid_config.json`
+
+> **Tip — include fresh (unseen) catalog items:**
+> ```bash
+> make train-hybrid-fresh
+> ```
+> This allows the content model to recommend products with no training interactions,
+> and adds `fresh_catalog_coverage_at_k`, `fresh_share_at_k`, and
+> `users_with_fresh_hit_at_k` to the metrics report.
+
+Outputs:
+
+```
+artifacts/hybrid/content_tfidf.joblib
+artifacts/hybrid/collaborative_svd.joblib
+artifacts/hybrid/popularity.joblib
+artifacts/hybrid/best_hybrid_config.json
+artifacts/hybrid/hybrid_metrics.json
 ```
 
-8. Retrain on train+validation and run final held-out test evaluation.
+---
+
+### Step 7 — Final held-out evaluation
 
 ```bash
 make evaluate-final
 ```
 
-9. Retrain on train+validation and run final held-out test evaluation with fresh-item exposure.
+**Run this only once.** It retrains all models on `train + val` (frozen configuration),
+then evaluates once on `interactions_test.parquet`. This is the reportable number.
 
-```bash
-make evaluate-final-fresh
+Reports NDCG@12, MAP@12, Hit Rate@12, Catalog Coverage@12, and 95% bootstrap
+confidence intervals for all four models (popularity, SVD, content, hybrid).
+
+> **With fresh-item exposure:**
+> ```bash
+> make evaluate-final-fresh
+> ```
+
+Outputs:
+
+```
+artifacts/final/collaborative_svd.joblib
+artifacts/final/content_tfidf.joblib
+artifacts/final/popularity.joblib
+artifacts/final/final_evaluation.json
+docs/offline_evaluation_report.md       ← human-readable results table
 ```
 
-10. Run cold-start evaluation.
+---
+
+### Step 8 — Cold-start evaluation
 
 ```bash
 make evaluate-cold-start
 ```
 
-11. Run policy-impact simulation (baseline policy vs personalized hybrid).
+Evaluates four fallback strategies on users whose IDs never appeared in train or val:
+
+| Priority | Strategy | Trigger |
+|---|---|---|
+| 1 | `session_content` | Session article IDs provided |
+| 2 | `demographic_popularity` | Age + membership provided, segment ≥ 50 events |
+| 3 | `category_popularity` | Preferred product group provided |
+| 4 | `global_popularity` | No context at all |
+
+Outputs:
+
+```
+artifacts/cold_start/cold_start.joblib
+artifacts/cold_start/cold_start_metrics.json
+docs/cold_start_report.md
+```
+
+---
+
+### Step 9 — Policy-impact simulation
 
 ```bash
 make evaluate-policy-impact
 ```
 
-12. Run tests.
+Simulates 200 rounds of user interactions for 1,000 users under two policies
+using a position-biased click model, then computes CTR lift:
 
-```bash
-make test
+- **Baseline policy:** global popularity
+- **Personalized policy:** hybrid recommender
+
+Outputs:
+
+```
+artifacts/policy_impact/policy_impact_report.json
+docs/policy_impact_report.md
 ```
 
-13. Serve the API and UI.
+---
+
+### Step 10 — Run the API and UI
+
+Make sure steps 7 and 8 have been completed first (the API loads the `final/`
+and `cold_start/` artifacts at startup).
+
+**In terminal 1 — start the API:**
 
 ```bash
 make run-api
+```
+
+The FastAPI server starts on **http://localhost:8000**.  
+Interactive API docs: **http://localhost:8000/docs**
+
+**In terminal 2 — start the UI:**
+
+```bash
 make run-ui
 ```
 
+The Streamlit UI starts on **http://localhost:8501**.
 
-## Kaggle Download Setup
-
-1. Install the Kaggle CLI in your active environment.
-
-```bash
-pip install kaggle
-```
-
-2. Configure authentication with environment variable. We can create a kaggle token from the settings on your account. 
+**Quick smoke test via curl:**
 
 ```bash
-export KAGGLE_API_TOKEN="YOUR_KAGGLE_API_KEY" 
+# Health check
+curl http://localhost:8000/health | python -m json.tool
+
+# Personalized recommendations (known user)
+curl -s -X POST http://localhost:8000/recommend \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "00007d2de826758b65a93dd36f3a97869f399168", "limit": 6}' \
+  | python -m json.tool
+
+# Cold-start: new user with session context
+curl -s -X POST http://localhost:8000/recommend \
+  -H "Content-Type: application/json" \
+  -d '{"session_article_ids": ["706016001", "759871002"], "limit": 6}' \
+  | python -m json.tool
+
+# Cold-start: new user with demographics only
+curl -s -X POST http://localhost:8000/recommend \
+  -H "Content-Type: application/json" \
+  -d '{"age": 27, "club_member_status": "active", "limit": 6}' \
+  | python -m json.tool
 ```
 
-3. Accept competition rules on Kaggle before downloading:
+**Streamlit UI modes:**
 
-https://www.kaggle.com/competitions/h-and-m-personalized-fashion-recommendations
+| Mode | What it shows |
+|---|---|
+| Personalized | Enter a customer ID → ranked feed with "Recommended because…" explanations |
+| Discover | Enter age, membership, product group, or session items → cold-start feed |
+| Assistant | Natural-language shopping chat grounded in the live catalog |
 
-4. Download and extract official H&M competition files into `data/raw`:
+---
 
-Project command (download + extract) wired in this repo:
+## 5. Databricks MLflow Tracking
+
+Every pipeline step has a `*-databricks` make target that logs metrics, params,
+and model artifacts to a Databricks-hosted MLflow server. **Skip this section
+entirely if you only need local runs.**
+
+### 5a — Install the Databricks CLI
 
 ```bash
-make download-data
+pip install databricks-cli
 ```
 
-Direct Kaggle command (download only):
+### 5b — Authenticate with your workspace
 
 ```bash
-kaggle competitions download -c h-and-m-personalized-fashion-recommendations -p data/raw
+databricks auth login \
+  --host "https://your-workspace.cloud.databricks.com" \
+  --profile RECO_NOVA
 ```
 
+This opens a browser for OAuth sign-in (Databricks Free Edition uses OAuth;
+no personal access token is needed). On macOS the credential is stored in
+Keychain, not in this repository.
 
-5. Manual browser download (no CLI required):
-
-- Open the competition data page:
-	https://www.kaggle.com/competitions/h-and-m-personalized-fashion-recommendations/data
-- Download the data zip file from the browser.
-- Move the zip into `data/raw/`.
-- Extract it in place.
-
-
-
-macOS/Linux:
+Verify the profile works:
 
 ```bash
-mkdir -p data/raw
-unzip data/raw/h-and-m-personalized-fashion-recommendations.zip -d data/raw
+databricks current-user me --profile RECO_NOVA
 ```
 
-Windows (PowerShell):
-
-```powershell
-New-Item -ItemType Directory -Force data/raw
-Expand-Archive -Path data/raw/h-and-m-personalized-fashion-recommendations.zip -DestinationPath data/raw -Force
-```
-
-- Confirm these files exist in `data/raw/`:
-	- `articles.csv`
-	- `customers.csv`
-	- `transactions_train.csv`
-	- `images/`
-
-## Next Steps
-
-1. Add a dataset loader under `src/reco_nova/`.
-2. Implement collaborative filtering and content-based feature pipelines.
-3. Wire the hybrid ranker into the API and UI entry points.
-
-## Data Pipeline (H&M Dataset)
-
-Data source: Kaggle competition `h-and-m-personalized-fashion-recommendations`.
-
-Place Kaggle files in `data/raw/`:
-- `transactions_train.csv`
-- `articles.csv`
-- `customers.csv`
-- `images/` (optional but recommended for multimodal embeddings)
-
-Run preprocessing:
+### 5c — Set environment variables in your shell
 
 ```bash
-make preprocess
+export DATABRICKS_CONFIG_PROFILE="RECO_NOVA"
+export MLFLOW_TRACKING_URI="databricks"
 ```
 
-This runs `src/reco_nova/preprocess.py` and does the following:
-- Validates required columns in `transactions_train.csv`, `articles.csv`, and `customers.csv`
-- Normalizes text fields and parses transaction dates
-- Cleans customer metadata, including median imputation for missing `age`
-- Builds `item_text` from product/category text columns and `image_path` when matching images exist
-- Splits interactions from the most recent 6-month window into:
-- `train`: months 1-5 plus weeks 1-2 of month 6
-- `val`: week 3 of month 6
-- `test`: week 4 of month 6
-- Builds `user_idx` and `item_idx` mappings from the training split only to avoid leakage
+Add both lines to `~/.zshrc` or `~/.bashrc` so they persist across sessions.
 
-Generated outputs in `data/processed/`:
-- `interactions_train.parquet`
-- `interactions_val.parquet`
-- `interactions_test.parquet`
-- `interactions_clean.parquet`
-- `items_clean.parquet`
-- `customers_clean.parquet`
-- `customer_map.parquet`
-- `item_map.parquet`
-- `preprocess_summary.json`
-
-## Collaborative Baseline and Offline Evaluation
-
-After preprocessing, train the popularity and collaborative-filtering models:
+### 5d — Update the conda environment (if installed before MLflow 3)
 
 ```bash
-make train-baseline
+# Remove stale packages first (only if you hit version conflicts)
+conda remove -n reco-nova mlflow databricks-cli -y
+
+# Reinstall from spec
+conda env update -n reco-nova -f environment.yml --prune
 ```
 
-The baseline uses randomized truncated SVD over a sparse implicit-feedback
-matrix. Repeated purchases receive logarithmically scaled confidence, and
-products already seen during training are removed from recommendations. A
-global popularity model provides both a comparison baseline and an unknown-user
-fallback.
+### 5e — Run any Databricks-enabled target
 
-For laptop-friendly iteration, the command evaluates on 1,000 warm validation
-users by default, while training uses all eligible rows. Run the module
-directly to cap either limit; a value of `0` uses all eligible rows or users:
+Each target below is a drop-in replacement for its local counterpart:
 
 ```bash
-PYTHONPATH=src python -m reco_nova.train \
-  --max-train-rows 500000 \
-  --max-eval-users 5000 \
-  --n-components 64 \
-  --k 12
+make train-baseline-databricks           # step 5 with remote tracking
+make train-hybrid-databricks             # step 6 with remote tracking
+make train-hybrid-fresh-databricks       # step 6 (fresh-item) with remote tracking
+make evaluate-final-databricks           # step 7 with remote tracking
+make evaluate-final-fresh-databricks     # step 7 (fresh-item) with remote tracking
+make evaluate-cold-start-databricks      # step 8 with remote tracking
+make evaluate-policy-impact-databricks   # step 9 with remote tracking
 ```
 
-Generated local artifacts (ignored by Git):
+Each run logs to the experiment path shown in the table below (auto-created if
+it does not exist):
 
-- `artifacts/popularity.joblib`
-- `artifacts/collaborative_svd.joblib`
-- `artifacts/baseline_metrics.json`
+| Target | MLflow experiment |
+|---|---|
+| `train-baseline-databricks` | `/Shared/reco-nova-baselines` |
+| `train-hybrid-databricks` | `/Shared/reco-nova-hybrid` |
+| `evaluate-final-databricks` | `/Shared/reco-nova-final-evaluation` |
+| `evaluate-cold-start-databricks` | `/Shared/reco-nova-cold-start` |
+| `evaluate-policy-impact-databricks` | `/Shared/reco-nova-policy-impact` |
 
-The report compares NDCG@K, MAP@K, and Hit Rate@K. It evaluates only warm
-validation users and catalog items because new-user and new-item performance is
-reported separately by the cold-start milestone. Duplicate holdout purchases
-count as one relevant product, and products previously purchased by that user
-are excluded from both recommendations and relevance labels.
+Every run records: training configuration, row/user/item counts, NDCG@K /
+MAP@K / Hit Rate@K, the JSON report, and serialized model artifacts.
 
-Run all automated tests with:
+> **Security note:** Never put Databricks tokens in the Makefile, notebooks,
+> or committed `.env` files. Always use environment variables or the CLI profile.
+
+---
+
+## 6. Conversational Assistant (Ollama)
+
+The assistant extracts shopping intent from natural language (category, colour,
+style, budget, result count) and calls the recommendation engine. It never
+invents product IDs — all products come from the live catalog.
+
+**Install Ollama and pull the default model (one-time):**
+
+```bash
+brew install ollama
+ollama serve &
+ollama pull llama3.2:3b
+```
+
+**Start the API with assistant support:**
+
+```bash
+make run-api
+```
+
+**Test the assistant:**
+
+```bash
+curl -s -X POST http://localhost:8000/assistant/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Show me casual blue tops under $40", "limit": 6}' \
+  | python -m json.tool
+```
+
+The assistant falls back to a deterministic regex parser if Ollama is not running.
+Override the model with `RECO_NOVA_OLLAMA_MODEL`, or disable LLM calls entirely:
+
+```bash
+export RECO_NOVA_LLM_PROVIDER=local
+```
+
+Run the reproducible assistant evaluation:
+
+```bash
+make evaluate-assistant
+```
+
+---
+
+
+## 7. Running Tests
 
 ```bash
 make test
 ```
 
-## Databricks MLflow Tracking
+Runs the full pytest suite covering preprocessing, all model classes, evaluation
+metrics, cold-start strategies, hybrid training, API endpoints, the Streamlit
+app, tracking integration, and the assistant.
 
-Use this section only if you want experiment tracking in a Databricks-hosted
-MLflow server. If you do not need remote tracking, skip this section and run
-the local `make` targets.
+---
 
-Baseline, hybrid, final-evaluation, and cold-start Databricks targets all
-share the same setup. Databricks Free Edition users can authenticate through
-browser-based OAuth and do not need a personal access token.
-
-1. Install or update the Databricks CLI. Then copy the workspace URL from your
-browser (only the scheme and hostname, without a notebook path) and create a
-named OAuth profile:
+## 8. Reproduce Everything in One Command
 
 ```bash
-databricks auth login --host "https://your-workspace.cloud.databricks.com" --profile RECO_NOVA
+make reproduce
 ```
 
-The command opens a browser for interactive sign-in. On macOS, the short-lived
-OAuth credential is stored in Keychain rather than in this repository.
+Runs: `preprocess → train-baseline → train-hybrid → evaluate-final → evaluate-cold-start`
+in sequence. Assumes Kaggle data is already in `data/raw/`.
 
-2. Verify the profile and configure MLflow in your current shell:
+---
 
-```bash
-databricks current-user me --profile RECO_NOVA
-export DATABRICKS_CONFIG_PROFILE="RECO_NOVA"
-export MLFLOW_TRACKING_URI="databricks"
-export MLFLOW_EXPERIMENT_NAME="/Shared/reco-nova-baselines"
+## 9. Reference — All Make Targets
+
+```
+make download-data                  Download + extract H&M Kaggle files
+make remove-zip                     Remove the downloaded zip to free disk space
+make preprocess                     Clean raw data and write parquet outputs
+make train-baseline                 Train popularity + SVD, evaluate on val
+make train-baseline-databricks      Same + log to Databricks MLflow
+make train-hybrid                   Train content + hybrid, tune blend weight
+make train-hybrid-databricks        Same + log to Databricks MLflow
+make train-hybrid-fresh             Hybrid with fresh-catalog item exposure
+make train-hybrid-fresh-databricks  Same + log to Databricks MLflow
+make evaluate-final                 Frozen retrain on train+val, evaluate on test
+make evaluate-final-databricks      Same + log to Databricks MLflow
+make evaluate-final-fresh           Final eval with fresh-item exposure
+make evaluate-final-fresh-databricks Same + log to Databricks MLflow
+make evaluate-cold-start            Evaluate new-user fallback strategies
+make evaluate-cold-start-databricks Same + log to Databricks MLflow
+make evaluate-policy-impact         Simulate baseline vs hybrid CTR lift
+make evaluate-policy-impact-databricks Same + log to Databricks MLflow
+make evaluate-assistant             Reproducible intent + guardrail proxy report
+make run-api                        Start FastAPI server on :8000
+make run-ui                         Start Streamlit UI on :8501
+make test                           Run the full pytest suite
+make warm-models                    Pre-download SentenceTransformer weights
+make reproduce                      Full pipeline in one command
+
+Note: run `make help` for the same list at any time.
 ```
 
-3. Ensure the declared MLflow and Databricks dependencies are installed:
+---
+
+## 10. Reference — Direct Module Flags
+
+Each pipeline step can be run directly for fine-grained control. The `make`
+targets are wrappers around these commands.
+
+**Preprocess**
 
 ```bash
-conda env update -f environment.yml
+PYTHONPATH=src python -m reco_nova.preprocess \
+  --raw-dir data/raw \
+  --processed-dir data/processed
 ```
 
-If the environment was created before MLflow 3 was declared, remove stale
-packages before updating:
+**Train baseline**
 
 ```bash
-conda remove -n reco-nova mlflow databricks-cli -y
-conda env update -n reco-nova -f environment.yml
-```
-
-4. Run any Databricks-enabled target (examples):
-
-```bash
-make train-baseline-databricks
-make train-hybrid-databricks
-make train-hybrid-fresh-databricks
-make evaluate-final-databricks
-make evaluate-final-fresh-databricks
-make evaluate-cold-start-databricks
-```
-
-Each run records:
-
-- Training limits, SVD dimensions, K, and random seed.
-- Training row, user, item, and validation-user counts.
-- NDCG@K, MAP@K, and Hit Rate@K for popularity and collaborative SVD.
-- The JSON evaluation report and both serialized model artifacts.
-- Project, task, and evaluation-scope tags.
-
-The Databricks run and experiment IDs are also added to the local
-`artifacts/baseline_metrics.json` report. OAuth is preferred, but if another
-workspace uses token authentication, never place its token in the Makefile,
-repository, notebooks, or committed `.env` files.
-
-## Content-Based and Hybrid Recommender
-
-Issue #10 combines collaborative and product-metadata signals. The content
-model creates TF-IDF word/bigram features from `item_text`, compresses them with
-randomized SVD, and represents each user by a weighted centroid of previously
-purchased products. The hybrid ranker normalizes collaborative and content
-scores per user before blending them.
-
-Train and tune locally:
-
-```bash
-make train-hybrid
-```
-
-If you want remote tracking, run the Databricks variant:
-
-```bash
-make train-hybrid-databricks
-```
-
-Defaults compare collaborative weights `0.25`, `0.50`, and `0.75` on a seeded
-random sample of 1,000 warm validation users. The run reports popularity,
-collaborative SVD, content TF-IDF, and best-hybrid metrics. Customize a run with:
-
-```bash
-PYTHONPATH=src python -m reco_nova.train_hybrid \
-  --max-train-rows 1000000 \
-  --max-eval-users 5000 \
+PYTHONPATH=src python -m reco_nova.train \
+  --processed-dir data/processed \
+  --artifacts-dir artifacts \
+  --max-train-rows 0 \       # 0 = all rows
+  --max-eval-users 1000 \
   --n-components 64 \
-  --hybrid-weights 0.25,0.5,0.75 \
   --k 12
 ```
 
-Generated artifacts:
-
-- `artifacts/hybrid/content_tfidf.joblib`
-- `artifacts/hybrid/collaborative_svd.joblib`
-- `artifacts/hybrid/popularity.joblib`
-- `artifacts/hybrid/best_hybrid_config.json`
-- `artifacts/hybrid/hybrid_metrics.json`
-
-Enable fresh-item exposure (metadata-only onboarding for unseen products):
-
-```bash
-make train-hybrid-fresh
-```
-
-If you want remote tracking for this run, use:
-
-```bash
-make train-hybrid-fresh-databricks
-```
-
-Direct module command with explicit flags:
+**Train hybrid**
 
 ```bash
 PYTHONPATH=src python -m reco_nova.train_hybrid \
-  --max-train-rows 1000000 \
-  --max-eval-users 5000 \
+  --processed-dir data/processed \
+  --artifacts-dir artifacts/hybrid \
+  --max-train-rows 0 \
+  --max-eval-users 1000 \
   --n-components 64 \
   --hybrid-weights 0.25,0.5,0.75 \
   --k 12 \
-  --include-fresh-catalog-items \
-  --min-fresh-in-top-k 1
+  [--include-fresh-catalog-items] \
+  [--min-fresh-in-top-k 1]
 ```
 
-When enabled, the report also includes fresh-catalog exposure metrics:
-
-- `fresh_catalog_coverage_at_k`
-- `fresh_share_at_k`
-- `users_with_fresh_hit_at_k`
-
-For a fair warm-start comparison, all four approaches rank only products seen
-in the training catalog. New-item retrieval will be measured separately in the
-cold-start and multimodal evaluations.
-
-## Final Held-Out Evaluation
-
-After selecting model settings on validation data, run the frozen comparison
-once on `interactions_test.parquet`:
-
-```bash
-make evaluate-final
-```
-
-This retrains the final models on the development data (train plus validation),
-keeps the selected `0.75` collaborative hybrid weight fixed, and reports:
-
-- NDCG@K, MAP@K, and Hit Rate@K.
-- Catalog Coverage@K.
-- 95% user-bootstrap confidence intervals.
-- Popularity, collaborative SVD, content TF-IDF, and hybrid results.
-
-The permanent table is written to `docs/offline_evaluation_report.md`; detailed
-intervals and configuration are saved to
-`artifacts/final/final_evaluation.json`. If you want remote tracking, run:
-
-```bash
-make evaluate-final-databricks
-```
-
-Evaluate final models with fresh-item exposure enabled:
-
-```bash
-make evaluate-final-fresh
-```
-
-If you want remote tracking for fresh-item final evaluation, run:
-
-```bash
-make evaluate-final-fresh-databricks
-```
-
-Direct module command with explicit flags:
+**Final evaluation**
 
 ```bash
 PYTHONPATH=src python -m reco_nova.evaluate_final \
+  --processed-dir data/processed \
+  --artifacts-dir artifacts/final \
+  --report-path docs/offline_evaluation_report.md \
   --k 12 \
-  --collaborative-weight 0.75 \
-  --include-fresh-catalog-items \
-  --min-fresh-in-top-k 1
+  [--include-fresh-catalog-items] \
+  [--min-fresh-in-top-k 1]
 ```
 
-## New-User Cold Start
-
-Unknown users follow an explainable fallback hierarchy: recent session items,
-age-band and membership popularity, preferred product group, then global
-popularity.
-
-Run local cold-start evaluation with:
+**Cold-start evaluation**
 
 ```bash
-make evaluate-cold-start
+PYTHONPATH=src python -m reco_nova.evaluate_cold_start \
+  --processed-dir data/processed \
+  --artifacts-dir artifacts/cold_start \
+  --report-path docs/cold_start_report.md \
+  --k 12
 ```
 
-If you want remote tracking for cold-start evaluation, run:
-
-```bash
-make evaluate-cold-start-databricks
-```
-
-The command compares demographic and no-context fallbacks using NDCG, MAP, Hit
-Rate, catalog coverage, and bootstrap confidence intervals. It writes a
-permanent report with examples to `docs/cold_start_report.md` and detailed
-results to `artifacts/cold_start/cold_start_metrics.json`.
-
-## Policy Impact Simulation
-
-This experiment estimates business impact by comparing a baseline policy
-(`popularity` or `random`) against the personalized hybrid policy under a
-position-biased click simulation.
-
-Run the default comparison (popularity baseline vs personalized hybrid):
-
-```bash
-make evaluate-policy-impact
-```
-
-Generated outputs:
-
-- `artifacts/policy_impact/policy_impact_report.json`
-- `docs/policy_impact_report.md`
-
-The report includes:
-
-- Offline ranking metrics for both policies (NDCG, MAP, Hit Rate).
-- Simulated interaction outcomes (CTR, relevant CTR, session-level click rates).
-- Lift metrics showing personalized-policy gain/loss versus baseline.
-
-Direct module command with explicit flags:
+**Policy-impact simulation**
 
 ```bash
 PYTHONPATH=src python -m reco_nova.evaluate_policy_impact \
+  --processed-dir data/processed \
+  --artifacts-dir artifacts/policy_impact \
+  --report-path docs/policy_impact_report.md \
   --baseline-policy popularity \
-  --max-train-rows 0 \
   --max-eval-users 1000 \
   --k 12 \
   --simulation-rounds 200
 ```
-
-## FastAPI Serving
-
-Generate the final and cold-start runtime artifacts, then start the API:
-
-```bash
-make evaluate-final
-make evaluate-cold-start
-make run-api
-```
-
-Interactive OpenAPI documentation is available at `http://localhost:8000/docs`.
-
-### Conversational shopping assistant
-
-Issue #22 adds `POST /assistant/chat`, which translates natural-language intent
-(category, colour, style, result count, and budget) into a grounded call to the
-recommendation service. The model never selects or invents product IDs: all
-returned products and explanations come from the local catalog and ranker.
-
-The assistant works without credentials. It uses a local Ollama model for
-structured intent extraction and automatically falls back to its deterministic
-parser whenever Ollama is unavailable. Install Ollama and pull the default
-lightweight model once:
-
-```bash
-brew install ollama
-ollama serve
-# In another terminal:
-ollama pull llama3.2:3b
-make run-api
-```
-
-No API key is required. Override the model with `RECO_NOVA_OLLAMA_MODEL`, or set
-`RECO_NOVA_LLM_PROVIDER=local` to disable model calls entirely. Budget is
-extracted but clearly marked unverified because the H&M item catalog has no
-authoritative current retail-price field. Run `make evaluate-assistant` for the
-reproducible intent and safety proxy report.
-The service exposes:
-
-- `GET /health` for model readiness.
-- `POST /recommend` for known-user hybrid or anonymous cold-start results.
-- `POST /explain` for recommendations with routing strategy and reason text.
-
-Example anonymous request:
-
-```bash
-curl -X POST http://localhost:8000/recommend \
-  -H 'Content-Type: application/json' \
-  -d '{"age": 24, "club_member_status": "active", "limit": 5}'
-```
-
-Override local paths with `RECO_NOVA_ARTIFACTS_DIR` and
-`RECO_NOVA_PROCESSED_DIR`. If models cannot be loaded, health reports a degraded
-state and recommendation endpoints return HTTP 503 with a diagnostic message.
-
-Personalized explanations include normalized collaborative/content signal
-contributions and the most similar product from the user's training history.
-Cold-start explanations name the fallback actually used and never claim
-behavior that is unavailable. See `docs/explainability.md` for the evidence
-contract and interpretation limits.
-
-## Product Discovery UI
-
-Reco-Nova includes a responsive Streamlit shopping experience with anonymous
-discovery and known-user personalization modes, real product imagery, category
-and session controls, cold-start context, explanation cards, and model-signal
-evidence.
-
-Start the backend and UI in separate terminals:
-
-```bash
-make run-api
-```
-
-```bash
-make run-ui
-```
-
-Open `http://localhost:8501`. The UI uses `http://localhost:8000` by default;
-override it with `RECO_NOVA_API_URL` when the API is hosted elsewhere.

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from reco_nova.train import (
     build_ground_truth,
     read_interactions,
 )
+from reco_nova.tracking import log_policy_impact_run
 
 
 @dataclass(frozen=True)
@@ -305,6 +307,9 @@ def evaluate_policy_impact(
     relevant_click_base: float = 0.35,
     irrelevant_click_base: float = 0.01,
     random_state: int = 42,
+    tracking_uri: str | None = None,
+    experiment_name: str = "/Shared/reco-nova-policy-impact",
+    run_name: str | None = None,
 ) -> dict[str, object]:
     """Estimate policy lift from simulated interactions on holdout users."""
     if baseline_policy not in {"popularity", "random"}:
@@ -484,7 +489,25 @@ def evaluate_policy_impact(
     json_path = artifacts_dir / "policy_impact_report.json"
     json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     report_path.parent.mkdir(parents=True, exist_ok=True)
+    previous_markdown = (
+        report_path.read_text() if report_path.exists() else None
+    )
     report_path.write_text(_build_markdown(report), encoding="utf-8")
+    if tracking_uri:
+        try:
+            report["tracking"] = log_policy_impact_run(
+                report=report,
+                artifacts_dir=artifacts_dir,
+                tracking_uri=tracking_uri,
+                experiment_name=experiment_name,
+                run_name=run_name,
+            )
+        except Exception:
+            if previous_markdown is not None:
+                report_path.write_text(previous_markdown, encoding="utf-8")
+            raise
+        json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        report_path.write_text(_build_markdown(report), encoding="utf-8")
     return report
 
 
@@ -533,6 +556,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--relevant-click-base", type=float, default=0.35)
     parser.add_argument("--irrelevant-click-base", type=float, default=0.01)
     parser.add_argument("--random-state", type=int, default=42)
+    parser.add_argument(
+        "--tracking-uri",
+        default=(os.getenv("MLFLOW_TRACKING_URI") or None),
+        help="MLflow server URI; use 'databricks' for a configured workspace",
+    )
+    parser.add_argument(
+        "--experiment-name",
+        default=os.getenv(
+            "MLFLOW_EXPERIMENT_NAME", "/Shared/reco-nova-policy-impact"
+        ),
+    )
+    parser.add_argument("--run-name", default=None)
     return parser.parse_args()
 
 
