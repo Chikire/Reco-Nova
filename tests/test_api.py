@@ -1,12 +1,22 @@
 from fastapi.testclient import TestClient
+from types import SimpleNamespace
 
 from reco_nova.api import RecommendationService, create_app
-from reco_nova.models import ColdStartResult
+from reco_nova.models import ColdStartResult, HybridScore
 
 
 class StubHybrid:
+    collaborative = SimpleNamespace(user_to_index_={})
+    content = SimpleNamespace(item_to_index_={})
+
     def recommend(self, user_id, k=10):
         return [("a", 0.9), ("b", 0.7)][:k]
+
+    def recommend_with_components(self, user_id, k=10):
+        return [
+            HybridScore("a", 0.9, 0.7, 0.2),
+            HybridScore("b", 0.7, 0.5, 0.2),
+        ][:k]
 
 
 class StubColdStart:
@@ -38,6 +48,10 @@ def test_health_and_known_user_recommendation():
     assert response.status_code == 200
     assert response.json()["strategy"] == "hybrid_personalized"
     assert response.json()["recommendations"][0]["product_name"] == "Shirt"
+    assert response.json()["recommendations"][0]["signals"] == {
+        "collaborative": 0.7,
+        "content": 0.2,
+    }
 
 
 def test_unknown_user_routes_to_cold_start_and_explain():

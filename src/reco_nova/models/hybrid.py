@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
 
 
 class Recommender(Protocol):
     def recommend(self, user_id: str, k: int = 10) -> list[tuple[str, float]]: ...
+
+
+@dataclass(frozen=True)
+class HybridScore:
+    article_id: str
+    score: float
+    collaborative_contribution: float
+    content_contribution: float
 
 
 def _minmax(scores: dict[str, float]) -> dict[str, float]:
@@ -112,3 +121,22 @@ class HybridRecommender:
         output.extend(additions)
         output = sorted(output, key=lambda pair: (-pair[1], pair[0]))
         return output[:k]
+
+    def recommend_with_components(self, user_id: str, k: int = 10) -> list[HybridScore]:
+        """Return recommendations with normalized weighted signal contributions."""
+        ranked = self.recommend(user_id, k)
+        candidate_k = k * self.candidate_multiplier
+        collaborative = _minmax(
+            dict(self.collaborative.recommend(user_id, candidate_k))
+        )
+        content = _minmax(dict(self.content.recommend(user_id, candidate_k)))
+        weight = self.collaborative_weight
+        return [
+            HybridScore(
+                article_id=str(item),
+                score=float(score),
+                collaborative_contribution=weight * collaborative.get(str(item), 0.0),
+                content_contribution=(1.0 - weight) * content.get(str(item), 0.0),
+            )
+            for item, score in ranked
+        ]

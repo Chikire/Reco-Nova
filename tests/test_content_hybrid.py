@@ -68,9 +68,12 @@ def test_hybrid_normalizes_and_blends_candidate_scores():
     content = StubRecommender([("b", 0.9), ("c", 0.8)])
     model = HybridRecommender(collaborative, content, collaborative_weight=0.5)
     output = model.recommend("u1", 3)
+    explained = model.recommend_with_components("u1", 3)
     assert output[0][0] == "a"
     assert {item for item, _ in output} == {"a", "b", "c"}
     assert _minmax({"a": 2.0, "b": 2.0}) == {"a": 1.0, "b": 1.0}
+    assert explained[0].collaborative_contribution >= 0
+    assert explained[0].content_contribution >= 0
 
 
 def test_hybrid_rejects_invalid_weight():
