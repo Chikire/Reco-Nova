@@ -5,16 +5,16 @@ Test purchases are used only as relevance labels.
 
 ## Evaluation setup
 
-- New test users available: 1,818
+- New test users available: 1,824
 - New test users evaluated: 1,000
-- Eligible catalog items: 29,761
+- Eligible catalog items: 50,685
 
 ## Results
 
 | Strategy | NDCG@K | MAP@K | Hit Rate@K | Coverage@K |
 |---|---:|---:|---:|---:|
-| global_popularity | 0.013669 | 0.006044 | 0.067000 | 0.000403 |
-| demographic_fallback | 0.015166 | 0.006961 | 0.071000 | 0.002587 |
+| global_popularity | 0.005626 | 0.002534 | 0.027000 | 0.000237 |
+| demographic_fallback | 0.005704 | 0.002919 | 0.025000 | 0.001026 |
 
 ## Example outputs
 
@@ -22,25 +22,25 @@ Test purchases are used only as relevance labels.
 
 - Strategy: `demographic_popularity`
 - Explanation: Popular with shoppers in age band 16-24 and membership active.
-- Products: `918522001, 448509014, 706016001, 924243001, 915526001`
+- Products: `759871002, 706016001, 741356002, 599580055, 372860002`
 
 ### category
 
 - Strategy: `category_popularity`
 - Explanation: Popular products in accessories.
-- Products: `759465001, 673396002, 759482001, 552716001, 893820001`
+- Products: `759465001, 673396002, 759469001, 759482001, 759479001`
 
 ### session
 
 - Strategy: `session_content`
 - Explanation: Based on products viewed this session.
-- Products: `538699007, 780188002, 767869001, 767869002, 688463003`
+- Products: `108775044, 538699007, 538699001, 780188001, 780188002`
 
 ### no_context
 
 - Strategy: `global_popularity`
 - Explanation: Popular products across all shoppers.
-- Products: `924243001, 751471001, 706016001, 923758001, 448509014`
+- Products: `610776002, 706016001, 610776001, 599580055, 599580038`
 
 ## Interpretation
 
@@ -49,9 +49,3 @@ Demographic performance is compared directly with the no-context global fallback
 ```bash
 make evaluate-cold-start
 ```
-
-## Databricks MLflow
-
-- Experiment: `/Shared/reco-nova-cold-start`
-- Experiment ID: `2491952985243196`
-- Run ID: `7fe5594282504bfdaebeebe63e0a116a`

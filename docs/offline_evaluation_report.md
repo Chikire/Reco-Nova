@@ -1,156 +1,82 @@
-# Reco-Nova Offline Evaluation Update
+# Reco-Nova Final Offline Evaluation
 
-This report captures the latest validation-set outputs shared from:
+This report evaluates frozen model choices once on the untouched test split.
+Hybrid weighting was selected on validation data before this evaluation.
+This run includes fresh-catalog exposure (items with no training interactions
+are eligible for recommendation via the content model).
 
-- `make train-baseline`
-- `make train-hybrid`
-- `make train-hybrid-fresh`
+## Evaluation setup
 
-All runs used full training data (`max_train_rows: 0`) and evaluated 1,000 warm validation users at `K=12`.
+- Training interactions: 7,821,301
+- Eligible training users: 731,092
+- Training-catalog items: 50,685
+- Fresh-catalog items (no training interactions): 54,857
+- Warm test users evaluated: 1,000
+- Ranking cutoff: K=12
+- Frozen collaborative weight: 0.75
+- Bootstrap samples: 1,000
+- Fresh-item exposure: enabled (min 1 fresh item per top-K)
 
-## 1) Baseline Validation (Popularity + Collaborative SVD)
+## Results
 
-### Configuration
+| Model | NDCG@12 | MAP@12 | Hit Rate@12 | Catalog Coverage@12 |
+|---|---:|---:|---:|---:|
+| popularity | 0.006806 | 0.003768 | 0.029 | 0.000335 |
+| collaborative_svd | 0.007181 | 0.004958 | 0.021 | 0.010437 |
+| content_tfidf | 0.002757 | 0.001947 | 0.007 | 0.135267 |
+| hybrid_frozen | 0.006690 | 0.004420 | 0.019 | 0.060708 |
 
-- max_train_rows: 0
-- max_eval_users: 1000
-- n_components: 64
-- k: 12
-- random_state: 42
-- recency_half_life_days: null
+### 95% Bootstrap Confidence Intervals
 
-### Data
+| Model | NDCG@12 lower | NDCG@12 upper | Hit Rate@12 lower | Hit Rate@12 upper |
+|---|---:|---:|---:|---:|
+| popularity | 0.003860 | 0.010396 | 0.020 | 0.040 |
+| collaborative_svd | 0.003605 | 0.011237 | 0.013 | 0.031 |
+| content_tfidf | 0.000535 | 0.005579 | 0.002 | 0.013 |
+| hybrid_frozen | 0.003208 | 0.010743 | 0.011 | 0.029 |
 
-- training_rows: 7,587,803
-- training_users: 719,245
-- training_items: 49,882
-- warm_validation_users: 1,000
+### Fresh-Catalog Exposure Metrics
 
-### Metrics
-
-| Model | NDCG@K | MAP@K | Hit Rate@K |
+| Model | Fresh Coverage@12 | Fresh Share@12 | Users With Fresh Hit |
 |---|---:|---:|---:|
-| popularity | 0.002293 | 0.000718 | 0.017000 |
-| collaborative_svd | 0.005399 | 0.003121 | 0.022000 |
+| popularity | 0.000 | 0.000 | 0.000 |
+| collaborative_svd | 0.000 | 0.000 | 0.000 |
+| content_tfidf | 0.042 | 0.311 | 0.910 |
+| hybrid_frozen | 0.020 | 0.135 | 1.000 |
 
-Evaluation scope: Warm-start validation users and items only; duplicate holdout purchases are one relevant item and items previously purchased by that user are excluded.
+## Interpretation
 
-### Interpretation
+**Popularity** achieves the highest hit rate (2.9%) among all models, reflecting
+that the most-purchased items remain broadly relevant at test time. Its near-zero
+catalog coverage confirms it only ever recommends a tiny slice of the catalog.
 
-- Collaborative SVD outperforms popularity on all ranking metrics (NDCG, MAP, Hit Rate), indicating that user-item interaction structure provides useful personalization beyond global trends.
-- Absolute values remain low, which is expected for sparse implicit-feedback fashion data with strict warm-start filtering and seen-item exclusion.
-- This section establishes the minimum bar for model quality: any hybrid strategy should beat collaborative SVD or justify trade-offs through broader catalog exposure.
+**Collaborative SVD** achieves the best NDCG and MAP, indicating it ranks
+relevant items higher within a ranked list, even though its absolute hit rate is
+lower than popularity. It covers ~1% of the catalog per user.
 
-## 2) Hybrid Validation (No Fresh-Item Exposure)
+**Content TF-IDF** has the lowest relevance metrics but the highest catalog
+coverage (13.5%). With fresh-catalog exposure enabled, it surfaces fresh items
+to 91% of users, contributing 31% of its recommendations from unseen products.
+This is its primary role: discovery and new-item onboarding, not precision.
 
-### Configuration
+**Hybrid (frozen at 0.75 collaborative weight)** blends collaborative precision
+with content diversity. With fresh-catalog exposure, 100% of evaluated users
+receive at least one fresh item in their top-12, and fresh items constitute
+13.5% of recommendations. The hybrid trades a small NDCG reduction versus
+pure collaborative in exchange for meaningful catalog coverage (6%) and full
+fresh-item reach.
 
-- max_train_rows: 0
-- max_eval_users: 1000
-- n_components: 64
-- max_text_features: 20000
-- k: 12
-- random_state: 42
-- hybrid_weights: 0.25,0.5,0.75
-- best_collaborative_weight: 0.75
-- include_fresh_catalog_items: false
-- min_fresh_in_top_k: 0
-- recency_half_life_days: null
+All confidence intervals overlap substantially across models, confirming that
+differences are not statistically distinguishable at N=1,000 test users.
+The primary differentiator between models is the **coverage–relevance tradeoff**
+rather than a clearly dominant model.
 
-### Data
+## Reproduce
 
-- training_rows: 7,587,803
-- training_users: 719,245
-- training_items: 49,882
-- catalog_items: 49,882
-- fresh_catalog_items: 55,660
-- warm_validation_users: 1,000
+```bash
+# Standard final evaluation
+make evaluate-final
 
-### Metrics
-
-| Model | NDCG@K | MAP@K | Hit Rate@K |
-|---|---:|---:|---:|
-| popularity | 0.003144 | 0.001226 | 0.017000 |
-| collaborative_svd | 0.006605 | 0.003371 | 0.027000 |
-| content_tfidf | 0.001749 | 0.000863 | 0.007000 |
-| hybrid_best | 0.006555 | 0.003428 | 0.026000 |
-
-### Hybrid Weight Tuning
-
-| Weight (CF) | NDCG@K | MAP@K | Hit Rate@K |
-|---|---:|---:|---:|
-| 0.25 | 0.002326 | 0.001158 | 0.010000 |
-| 0.50 | 0.005028 | 0.002735 | 0.019000 |
-| 0.75 | 0.006555 | 0.003428 | 0.026000 |
-
-Evaluation scope: Seeded random sample of warm-start validation users and items; previously purchased products are excluded.
-
-### Interpretation
-
-- The tuned hybrid (`cf=0.75`) is close to collaborative SVD and slightly better on MAP, but it does not materially improve Hit Rate.
-- Pure content performance is much weaker than collaborative in this setup, which suggests text metadata alone is not sufficient for strong warm-user ranking on this split.
-- The weight sweep shows a monotonic gain as collaborative weight increases (`0.25 -> 0.75`), meaning collaborative signal is currently the primary driver of relevance, while content acts as a light secondary signal.
-
-## 3) Hybrid Validation (Fresh-Item Exposure Enabled)
-
-### Configuration
-
-- max_train_rows: 0
-- max_eval_users: 1000
-- n_components: 64
-- max_text_features: 20000
-- k: 12
-- random_state: 42
-- hybrid_weights: 0.25,0.5,0.75
-- best_collaborative_weight: 0.75
-- include_fresh_catalog_items: true
-- min_fresh_in_top_k: 1
-- recency_half_life_days: null
-
-### Data
-
-- training_rows: 7,587,803
-- training_users: 719,245
-- training_items: 49,882
-- catalog_items: 105,542
-- fresh_catalog_items: 55,660
-- warm_validation_users: 1,000
-
-### Metrics
-
-| Model | NDCG@K | MAP@K | Hit Rate@K | Fresh Catalog Coverage@K | Fresh Share@K | Users with Fresh Hit@K |
-|---|---:|---:|---:|---:|---:|---:|
-| popularity | 0.003144 | 0.001226 | 0.017000 | 0.000000 | 0.000000 | 0.000000 |
-| collaborative_svd | 0.006605 | 0.003371 | 0.027000 | 0.000000 | 0.000000 | 0.000000 |
-| content_tfidf | 0.001825 | 0.000895 | 0.008000 | 0.042688 | 0.320000 | 0.928000 |
-| hybrid_best | 0.005796 | 0.002976 | 0.024000 | 0.019421 | 0.135167 | 1.000000 |
-
-### Hybrid Weight Tuning (Fresh Metrics Included)
-
-| Weight (CF) | NDCG@K | MAP@K | Hit Rate@K | Fresh Catalog Coverage@K | Fresh Share@K | Users with Fresh Hit@K |
-|---|---:|---:|---:|---:|---:|---:|
-| 0.25 | 0.001566 | 0.000731 | 0.008000 | 0.043011 | 0.324833 | 1.000000 |
-| 0.50 | 0.004012 | 0.002144 | 0.016000 | 0.035429 | 0.256833 | 1.000000 |
-| 0.75 | 0.005796 | 0.002976 | 0.024000 | 0.019421 | 0.135167 | 1.000000 |
-
-Evaluation scope: Seeded random sample of warm-start validation users and items; previously purchased products are excluded.
-
-### Interpretation
-
-- Enabling fresh-item exposure introduces a clear relevance-vs-discovery trade-off: ranking quality drops versus the non-fresh hybrid (`NDCG 0.006555 -> 0.005796`, `MAP 0.003428 -> 0.002976`, `Hit Rate 0.026 -> 0.024`).
-- In return, the model guarantees fresh-item presence for all evaluated users (`users_with_fresh_hit_at_k = 1.0`) and allocates meaningful recommendation share to new catalog products (`fresh_share_at_k ~ 0.135` for the selected weight).
-- Higher collaborative weights still improve core relevance metrics, while lower collaborative weights increase fresh exposure, giving a controllable operating point depending on business priority.
-
-### Tracking
-
-- run_id: a692236179444ec39487799cf6044e39
-- experiment_id: 4313269454646507
-- tracking_uri: databricks
-- experiment_name: /Shared/reco-nova-baselines
-
-## Overall Interpretation
-
-- For warm-user accuracy, collaborative signal remains the strongest contributor in this pipeline.
-- Hybrid blending helps modestly when collaborative dominates, but text-only content has limited standalone quality on this slice.
-- Fresh-item onboarding works as designed and provides explicit exposure guarantees, with an expected and measurable impact on ranking relevance.
-- Recommended practical default: keep `cf=0.75` for balanced performance, then tune `min_fresh_in_top_k` and/or weight only when business goals require more aggressive new-item discovery.
+# With fresh-catalog exposure (this report)
+make evaluate-final-fresh
+```
