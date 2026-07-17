@@ -5,8 +5,11 @@ from reco_nova.evaluation import (
     bootstrap_metric_intervals,
     catalog_coverage,
     evaluate_rankings,
+    fresh_catalog_coverage_at_k,
+    fresh_share_at_k,
     hit_rate_at_k,
     ndcg_at_k,
+    users_with_fresh_hit_at_k,
 )
 
 
@@ -36,6 +39,24 @@ def test_evaluate_rankings_uses_common_users_with_truth():
 def test_catalog_coverage_counts_unique_top_k_items():
     recommendations = {"u1": ["a", "b"], "u2": ["b", "c"]}
     assert catalog_coverage(recommendations, catalog_size=6, k=2) == 0.5
+
+
+def test_fresh_item_exposure_metrics():
+    recommendations = {
+        "u1": ["a", "fresh1"],
+        "u2": ["fresh1", "fresh2"],
+        "u3": ["a", "b"],
+    }
+    fresh_ids = {"fresh1", "fresh2", "fresh3"}
+    assert fresh_catalog_coverage_at_k(recommendations, fresh_ids, 2) == pytest.approx(
+        2 / 3
+    )
+    assert fresh_share_at_k(recommendations, fresh_ids, 2) == pytest.approx(
+        (0.5 + 1.0 + 0.0) / 3
+    )
+    assert users_with_fresh_hit_at_k(recommendations, fresh_ids, 2) == pytest.approx(
+        2 / 3
+    )
 
 
 def test_bootstrap_intervals_are_reproducible_and_bound_point_estimate():
