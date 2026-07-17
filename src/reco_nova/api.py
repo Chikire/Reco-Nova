@@ -160,6 +160,15 @@ def create_app(service: RecommendationService | None = None) -> FastAPI:
             detail="Models loaded" if is_ready else str(request.app.state.load_error),
         )
 
+    @api.get("/")
+    def root() -> dict[str, str]:
+        """Discoverability response for users opening the server in a browser."""
+        return {
+            "name": "Reco-Nova Recommendation API",
+            "health": "/health",
+            "documentation": "/docs",
+        }
+
     @api.post("/recommend", response_model=RecommendationResponse)
     def recommend(payload: RecommendationRequest, request: Request) -> RecommendationResponse:
         return ready(request).recommend(payload)

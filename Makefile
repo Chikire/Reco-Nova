@@ -36,13 +36,13 @@ preprocess:
 	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.preprocess --raw-dir $(RAW_DIR) --processed-dir $(PROCESSED_DIR)
 
 train-baseline:
-	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.train --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts
+	MLFLOW_TRACKING_URI= PYTHONPATH=$(PYTHONPATH) python -m reco_nova.train --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts
 
 train-baseline-databricks:
 	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.train --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts --tracking-uri databricks --experiment-name /Shared/reco-nova-baselines
 
 train-hybrid:
-	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.train_hybrid --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/hybrid
+	MLFLOW_TRACKING_URI= PYTHONPATH=$(PYTHONPATH) python -m reco_nova.train_hybrid --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/hybrid
 
 train-hybrid-databricks:
 	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.train_hybrid --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/hybrid --tracking-uri databricks --experiment-name /Shared/reco-nova-hybrid
@@ -54,7 +54,7 @@ train-hybrid-fresh-databricks:
 	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.train_hybrid --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/hybrid --include-fresh-catalog-items --min-fresh-in-top-k 1 --tracking-uri databricks --experiment-name /Shared/reco-nova-hybrid
 
 evaluate-final:
-	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_final --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/final --report-path docs/offline_evaluation_report.md
+	MLFLOW_TRACKING_URI= PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_final --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/final --report-path docs/offline_evaluation_report.md
 
 evaluate-final-databricks:
 	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_final --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/final --report-path docs/offline_evaluation_report.md --tracking-uri databricks --experiment-name /Shared/reco-nova-final-evaluation
@@ -66,7 +66,7 @@ evaluate-final-fresh-databricks:
 	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_final --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/final --report-path docs/offline_evaluation_report.md --include-fresh-catalog-items --min-fresh-in-top-k 1 --tracking-uri databricks --experiment-name /Shared/reco-nova-final-evaluation
 
 evaluate-cold-start:
-	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_cold_start --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/cold_start --report-path docs/cold_start_report.md
+	MLFLOW_TRACKING_URI= PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_cold_start --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/cold_start --report-path docs/cold_start_report.md
 
 evaluate-cold-start-databricks:
 	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_cold_start --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/cold_start --report-path docs/cold_start_report.md --tracking-uri databricks --experiment-name /Shared/reco-nova-cold-start
