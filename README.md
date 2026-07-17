@@ -548,3 +548,9 @@ curl -X POST http://localhost:8000/recommend \
 Override local paths with `RECO_NOVA_ARTIFACTS_DIR` and
 `RECO_NOVA_PROCESSED_DIR`. If models cannot be loaded, health reports a degraded
 state and recommendation endpoints return HTTP 503 with a diagnostic message.
+
+Personalized explanations include normalized collaborative/content signal
+contributions and the most similar product from the user's training history.
+Cold-start explanations name the fallback actually used and never claim
+behavior that is unavailable. See `docs/explainability.md` for the evidence
+contract and interpretation limits.

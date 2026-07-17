@@ -34,6 +34,8 @@ class ProductRecommendation(BaseModel):
     product_group: str | None = None
     image_path: str | None = None
     reason: str
+    signals: dict[str, float] = Field(default_factory=dict)
+    evidence_article_ids: list[str] = Field(default_factory=list)
 
 
 class RecommendationResponse(BaseModel):
@@ -81,7 +83,11 @@ class RecommendationService:
 
     def recommend(self, payload: RecommendationRequest) -> RecommendationResponse:
         if payload.user_id and payload.user_id in self.known_users:
-            ranked = self.hybrid.recommend(payload.user_id, payload.limit)
+            components = self.hybrid.recommend_with_components(
+                payload.user_id, payload.limit
+            )
+            ranked = [(entry.article_id, entry.score) for entry in components]
+            component_lookup = {entry.article_id: entry for entry in components}
             strategy = "hybrid_personalized"
             explanation = "Blended collaborative and product-content preferences."
         else:
@@ -97,9 +103,27 @@ class RecommendationService:
                 result.strategy,
                 result.explanation,
             )
+            component_lookup = {}
         products = []
         for article_id, score in ranked:
             item = self.metadata.get(str(article_id), {})
+            component = component_lookup.get(str(article_id))
+            evidence_ids: list[str] = []
+            reason = explanation
+            if component is not None and payload.user_id is not None:
+                evidence = self._closest_history_item(payload.user_id, str(article_id))
+                if evidence is not None:
+                    evidence_ids = [evidence]
+                    evidence_name = _optional(
+                        self.metadata.get(evidence, {}).get("prod_name")
+                    ) or evidence
+                    reason = f"Because you interacted with {evidence_name}."
+                signals = {
+                    "collaborative": component.collaborative_contribution,
+                    "content": component.content_contribution,
+                }
+            else:
+                signals = {strategy: 1.0}
             products.append(
                 ProductRecommendation(
                     article_id=str(article_id),
@@ -107,7 +131,9 @@ class RecommendationService:
                     product_name=_optional(item.get("prod_name")),
                     product_group=_optional(item.get("product_group_name")),
                     image_path=_optional(item.get("image_path")),
-                    reason=explanation,
+                    reason=reason,
+                    signals=signals,
+                    evidence_article_ids=evidence_ids,
                 )
             )
         return RecommendationResponse(
@@ -116,6 +142,28 @@ class RecommendationService:
             explanation=explanation,
             recommendations=products,
         )
+
+    def _closest_history_item(self, user_id: str, article_id: str) -> str | None:
+        """Find the history item most content-similar to the recommendation."""
+        collaborative = self.hybrid.collaborative
+        content = self.hybrid.content
+        user_index = collaborative.user_to_index_.get(str(user_id))
+        target_index = content.item_to_index_.get(str(article_id))
+        if user_index is None or target_index is None:
+            return None
+        eligible = []
+        for index in collaborative.seen_[user_index]:
+            history_id = str(collaborative.item_ids_[index])
+            content_index = content.item_to_index_.get(history_id)
+            if content_index is not None:
+                eligible.append((history_id, content_index))
+        if not eligible:
+            return None
+        target = content.item_factors_[target_index]
+        return max(
+            eligible,
+            key=lambda pair: float(content.item_factors_[pair[1]] @ target),
+        )[0]
 
 
 def _optional(value: object) -> str | None:
