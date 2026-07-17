@@ -554,3 +554,23 @@ contributions and the most similar product from the user's training history.
 Cold-start explanations name the fallback actually used and never claim
 behavior that is unavailable. See `docs/explainability.md` for the evidence
 contract and interpretation limits.
+
+## Product Discovery UI
+
+Reco-Nova includes a responsive Streamlit shopping experience with anonymous
+discovery and known-user personalization modes, real product imagery, category
+and session controls, cold-start context, explanation cards, and model-signal
+evidence.
+
+Start the backend and UI in separate terminals:
+
+```bash
+make run-api
+```
+
+```bash
+make run-ui
+```
+
+Open `http://localhost:8501`. The UI uses `http://localhost:8000` by default;
+override it with `RECO_NOVA_API_URL` when the API is hosted elsewhere.
