@@ -72,6 +72,9 @@ class RecommendationService:
     def load(cls, artifacts_dir: Path, processed_dir: Path) -> "RecommendationService":
         final_dir = artifacts_dir / "final"
         cold_dir = artifacts_dir / "cold_start"
+        # Models are loaded in a background thread (see create_app lifespan).
+        # Plain joblib.load is used; mmap_mode provides no benefit for
+        # class-hierarchy pickles (scikit-learn / surprise objects).
         collaborative = joblib.load(final_dir / "collaborative_svd.joblib")
         content = joblib.load(final_dir / "content_tfidf.joblib")
         cold_start = joblib.load(cold_dir / "cold_start.joblib")
@@ -289,27 +292,36 @@ def _optional(value: object) -> str | None:
 def create_app(service: RecommendationService | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        import threading
         app.state.service = service
         app.state.load_error = None
+        app.state.loading = False
         if app.state.service is None:
-            try:
-                repo_root = Path(__file__).resolve().parents[2]
-                app.state.service = RecommendationService.load(
-                    Path(
-                        os.getenv(
-                            "RECO_NOVA_ARTIFACTS_DIR",
-                            str(repo_root / "artifacts"),
-                        )
-                    ),
-                    Path(
-                        os.getenv(
-                            "RECO_NOVA_PROCESSED_DIR",
-                            str(repo_root / "data" / "processed"),
-                        )
-                    ),
-                )
-            except Exception as exc:  # health must remain available for diagnosis
-                app.state.load_error = str(exc)
+            app.state.loading = True
+
+            def _load() -> None:
+                try:
+                    repo_root = Path(__file__).resolve().parents[2]
+                    app.state.service = RecommendationService.load(
+                        Path(
+                            os.getenv(
+                                "RECO_NOVA_ARTIFACTS_DIR",
+                                str(repo_root / "artifacts"),
+                            )
+                        ),
+                        Path(
+                            os.getenv(
+                                "RECO_NOVA_PROCESSED_DIR",
+                                str(repo_root / "data" / "processed"),
+                            )
+                        ),
+                    )
+                except Exception as exc:
+                    app.state.load_error = str(exc)
+                finally:
+                    app.state.loading = False
+
+            threading.Thread(target=_load, daemon=True).start()
         yield
 
     api = FastAPI(
@@ -329,10 +341,20 @@ def create_app(service: RecommendationService | None = None) -> FastAPI:
     @api.get("/health", response_model=HealthResponse)
     def health(request: Request) -> HealthResponse:
         is_ready = request.app.state.service is not None
+        loading = getattr(request.app.state, "loading", False)
+        if is_ready:
+            detail = "Models loaded"
+            status = "ok"
+        elif loading:
+            detail = "Models loading in background — check back in a moment"
+            status = "loading"
+        else:
+            detail = str(request.app.state.load_error)
+            status = "degraded"
         return HealthResponse(
-            status="ok" if is_ready else "degraded",
+            status=status,
             models_ready=is_ready,
-            detail="Models loaded" if is_ready else str(request.app.state.load_error),
+            detail=detail,
         )
 
     @api.get("/")

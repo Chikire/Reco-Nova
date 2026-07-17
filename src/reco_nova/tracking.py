@@ -7,6 +7,7 @@ provided through environment variables, never source code or CLI arguments.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -34,14 +35,14 @@ def log_recommender_run(
     task: str = "recommendation-evaluation",
     artifact_path: str = "recommender",
 ) -> dict[str, str]:
-    """Log configuration, metrics, counts, and artifacts to an MLflow server."""
+    """Log configuration, metrics, counts, and artifacts to MLflow."""
     try:
         import mlflow
     except Exception as exc:
         raise RuntimeError(
             "MLflow tracking was requested, but MLflow could not be imported. "
             "The environment may contain the obsolete conda-forge MLflow 1.x "
-            "package. Reinstall the tracking dependencies from environment.yml. "
+            "package. Reinstall tracking dependencies from environment.yml. "
             f"Original import error: {exc}"
         ) from exc
 
@@ -76,3 +77,73 @@ def log_baseline_run(**kwargs: Any) -> dict[str, str]:
         task="baseline-collaborative-filtering",
         artifact_path="baseline",
     )
+
+
+def log_policy_impact_run(
+    report: Mapping[str, Any],
+    artifacts_dir: Path,
+    tracking_uri: str,
+    experiment_name: str,
+    run_name: str | None = None,
+) -> dict[str, str]:
+    """Log policy-impact simulation outputs to an MLflow server."""
+    try:
+        import mlflow
+    except Exception as exc:
+        raise RuntimeError(
+            "MLflow tracking was requested, but MLflow could not be imported. "
+            "Reinstall the tracking dependencies from environment.yml. "
+            f"Original import error: {exc}"
+        ) from exc
+
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment(experiment_name)
+    with mlflow.start_run(run_name=run_name) as run:
+        mlflow.log_params(report["configuration"])
+        mlflow.log_params(
+            {f"data.{name}": value for name, value in report["data"].items()}
+        )
+
+        metrics: dict[str, float] = {}
+        for policy_name, values in report["offline_metrics"].items():
+            for metric_name, value in values.items():
+                if metric_name not in {"k", "users_evaluated"}:
+                    numeric = float(value)
+                    if math.isfinite(numeric):
+                        metrics[
+                            f"offline.{policy_name}.{metric_name}"
+                        ] = numeric
+        for policy_name, values in report["simulated_outcomes"].items():
+            for metric_name, value in values.items():
+                numeric = float(value)
+                if math.isfinite(numeric):
+                    metrics[f"simulated.{policy_name}.{metric_name}"] = numeric
+        for metric_name, value in report["lift"].items():
+            numeric = float(value)
+            if math.isfinite(numeric):
+                metrics[f"lift.{metric_name}"] = numeric
+        for weight_name, values in report.get(
+            "hybrid_weight_tuning", {}
+        ).items():
+            for metric_name, value in values.items():
+                if metric_name not in {"k", "users_evaluated"}:
+                    numeric = float(value)
+                    if math.isfinite(numeric):
+                        metrics[
+                            f"tuning.{weight_name}.{metric_name}"
+                        ] = numeric
+        mlflow.log_metrics(metrics)
+        mlflow.set_tags(
+            {
+                "project": "reco-nova",
+                "task": "policy-impact-simulation",
+                "evaluation_scope": "offline-simulation",
+            }
+        )
+        mlflow.log_artifacts(str(artifacts_dir), artifact_path="policy-impact")
+        return {
+            "run_id": run.info.run_id,
+            "experiment_id": run.info.experiment_id,
+            "tracking_uri": tracking_uri,
+            "experiment_name": experiment_name,
+        }

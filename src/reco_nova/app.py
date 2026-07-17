@@ -187,6 +187,8 @@ def render_sidebar() -> tuple[str, dict[str, Any]]:
         health = api_request("/health")
         if health.get("models_ready"):
             st.sidebar.success("Recommendation engine online")
+        elif health.get("status") == "loading":
+            st.sidebar.info("⏳ Models loading… refresh in a moment")
         else:
             st.sidebar.warning("API online · models unavailable")
     except APIError:

@@ -1,7 +1,7 @@
 import mlflow
 
 
-DATABRICKS_PROFILE = "dbc-b0ed69bf-78a4"
+DATABRICKS_PROFILE = "dbc-fe6844ea-0018"
 EXPERIMENT_PATH = "/Shared/Reco-Nova-Experiments"
 
 
@@ -22,7 +22,7 @@ def main() -> None:
         mlflow.log_param("execution_environment", "VS Code")
         mlflow.log_metric("connection_success", 1.0)
 
-        mlflow.set_tag("developer", "Peter")
+        mlflow.set_tag("developer", "Chikire")
         mlflow.set_tag("purpose", "connection-test")
 
         print("MLflow connection successful.")
