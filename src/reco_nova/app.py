@@ -87,7 +87,19 @@ def inject_theme() -> None:
         :root { --orange:#ff6b00; --orange2:#ff9a3d; --ink:#0b0b0d; --muted:#6f7178; --paper:#f7f7f5; }
         .stApp { background: var(--paper); color: var(--ink); font-family:'DM Sans',sans-serif; }
         [data-testid="stSidebar"] { background:#0b0b0d; border-right:1px solid #252529; }
-        [data-testid="stSidebar"] * { color:#f8f8f5 !important; }
+        [data-testid="stSidebar"] label,
+        [data-testid="stSidebar"] p,
+        [data-testid="stSidebar"] span:not([data-baseweb="tag"] span),
+        [data-testid="stSidebar"] h1,
+        [data-testid="stSidebar"] h2,
+        [data-testid="stSidebar"] h3,
+        [data-testid="stSidebar"] .stMarkdown,
+        [data-testid="stSidebar"] .stRadio label,
+        [data-testid="stSidebar"] .stSlider label,
+        [data-testid="stSidebar"] .stSlider [data-testid="stTickBarMin"],
+        [data-testid="stSidebar"] .stSlider [data-testid="stTickBarMax"],
+        [data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+        [data-testid="stSidebar"] small { color:#f8f8f5 !important; }
         [data-testid="stSidebar"] .stButton button { background:var(--orange); border:0; color:white; }
         h1,h2,h3 { font-family:'Manrope',sans-serif !important; letter-spacing:-.035em; }
         .block-container { max-width:1440px; padding:1.5rem 3rem 4rem; }
@@ -114,8 +126,21 @@ def inject_theme() -> None:
         .rn-empty { min-height:260px;border-radius:15px;background:linear-gradient(145deg,#171719,#ff6b00);display:grid;place-items:center;color:white;font:800 2rem Manrope; }
         .stButton button[kind="primary"], .stFormSubmitButton button { background:var(--orange)!important;color:white!important;border:0!important;border-radius:12px!important;font-weight:700!important;min-height:46px;box-shadow:0 10px 24px #ff6b0030; }
         .stButton button:hover, .stFormSubmitButton button:hover { background:#e85f00!important;transform:translateY(-1px); }
+        .stTextInput input, .stNumberInput input { color: var(--ink) !important; }
         div[data-baseweb="select"] > div, .stTextInput input, .stNumberInput input { border-radius:12px!important; }
+        [data-testid="stSidebar"] .stTextInput input,
+        [data-testid="stSidebar"] .stNumberInput input,
+        [data-testid="stSidebar"] textarea { color:#0b0b0d !important; background:#f0efeb !important; border-color:#444 !important; }
+        [data-testid="stSidebar"] .stTextInput input::placeholder,
+        [data-testid="stSidebar"] textarea::placeholder { color:#777 !important; }
+        [data-testid="stSidebar"] [data-baseweb="select"] > div { background:#f0efeb !important; border-color:#555 !important; }
+        [data-testid="stSidebar"] [data-baseweb="select"] div,
+        [data-testid="stSidebar"] [data-baseweb="select"] span,
+        [data-testid="stSidebar"] [data-baseweb="select"] input { color:#0b0b0d !important; }
+        [data-testid="stSidebar"] [data-baseweb="tag"] { background:#ff6b00 !important; }
+        [data-testid="stSidebar"] [data-baseweb="tag"] span { color:#fff !important; }
         @media(max-width:760px){.block-container{padding:1rem}.rn-hero{padding:2.2rem 1.5rem;border-radius:22px}.rn-hero h1{font-size:2.6rem}}
+        
         </style>
         """,
         unsafe_allow_html=True,
@@ -139,11 +164,24 @@ def render_sidebar() -> tuple[str, dict[str, Any]]:
         )
         groups = ["All products", *product_groups()]
         values["product_group"] = st.sidebar.selectbox("Product group", groups)
-        values["session_items"] = st.sidebar.text_area(
+        _DEMO_ARTICLE_IDS = [
+            "108775044", "706016001", "108775015", "759871002",
+            "599580055", "372860002", "610776002", "610776001",
+            "741356002", "538699001", "780188001", "673396002",
+        ]
+        selected_ids = st.sidebar.multiselect(
             "Recently viewed article IDs",
-            placeholder="108775044, 706016001",
-            help="Comma-separated IDs personalize this anonymous session.",
+            options=_DEMO_ARTICLE_IDS,
+            default=["108775044", "706016001"],
+            help="Pick from demo IDs to simulate session-aware cold-start recommendations.",
         )
+        extra_ids = st.sidebar.text_input(
+            "Add custom article IDs",
+            placeholder="e.g. 123456001, 987654002",
+            help="Comma-separated additional IDs to include alongside selected demo IDs.",
+        )
+        custom = [item.strip() for item in extra_ids.split(",") if item.strip()]
+        values["session_items"] = ", ".join(selected_ids + custom)
     st.sidebar.divider()
     try:
         health = api_request("/health")
