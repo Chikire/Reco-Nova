@@ -211,6 +211,8 @@ class ShoppingAssistant:
         if intent.product_group:
             payload["preferred_product_group"] = intent.product_group
             payload["use_demographics"] = False
+        if intent.max_budget is not None:
+            payload["max_budget"] = intent.max_budget
 
         response = self._recommend(payload)
         products = list(response.get("recommendations", []))
@@ -239,12 +241,12 @@ class ShoppingAssistant:
                 ).lower()
             ]
         products = products[: intent.limit]
-        unsupported = ["budget"] if intent.max_budget is not None else []
+        budget_applied = intent.max_budget is not None
         constraints = [value for value in (intent.colour, intent.style, intent.product_group) if value]
+        if budget_applied:
+            constraints.append(f"under ${int(intent.max_budget)}")
         qualifier = f" for {' · '.join(constraints)}" if constraints else ""
         message = f"I found {len(products)} grounded recommendation(s){qualifier}."
-        if unsupported:
-            message += " Price is not available in this catalog, so I could not verify your budget."
         if not products:
             message += " Try a broader category or fewer constraints."
         return AssistantResult(
@@ -253,5 +255,5 @@ class ShoppingAssistant:
             recommendations=products,
             strategy=str(response.get("strategy")) if response.get("strategy") else None,
             mode=mode,
-            unsupported_constraints=unsupported,
+            unsupported_constraints=[],
         )
