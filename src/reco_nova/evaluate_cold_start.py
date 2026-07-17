@@ -9,6 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import joblib
 
 from reco_nova.evaluation import (
     bootstrap_metric_intervals,
@@ -264,6 +265,7 @@ def evaluate_cold_start(
         "evaluation_scope": "Users absent from full train and validation; known catalog items only.",
     }
     artifacts_dir.mkdir(parents=True, exist_ok=True)
+    joblib.dump(model, artifacts_dir / "cold_start.joblib")
     json_path = artifacts_dir / "cold_start_metrics.json"
     json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     report_path.parent.mkdir(parents=True, exist_ok=True)

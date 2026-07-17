@@ -19,3 +19,4 @@ def test_cold_start_evaluation_identifies_unseen_users_and_writes_report(tmp_pat
     assert set(report["metrics"]) == {"global_popularity", "demographic_fallback"}
     assert {example["strategy"] for example in report["examples"]} == {"session_content", "demographic_popularity", "category_popularity", "global_popularity"}
     assert report_path.exists()
+    assert (artifacts / "cold_start.joblib").exists()

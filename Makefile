@@ -3,7 +3,7 @@ RAW_DIR := data/raw
 PROCESSED_DIR := data/processed
 ZIP_FILE := $(RAW_DIR)/h-and-m-personalized-fashion-recommendations.zip
 
-.PHONY: help download-data remove-zip preprocess train-baseline train-baseline-databricks train-hybrid train-hybrid-databricks evaluate-final evaluate-final-databricks evaluate-cold-start evaluate-cold-start-databricks test
+.PHONY: help download-data remove-zip preprocess train-baseline train-baseline-databricks train-hybrid train-hybrid-databricks evaluate-final evaluate-final-databricks evaluate-cold-start evaluate-cold-start-databricks run-api test
 help:
 	@echo "Available targets:"
 	@echo "  make download-data - Download + extract H&M Kaggle competition files"
@@ -17,6 +17,7 @@ help:
 	@echo "  make evaluate-final-databricks - Track final test metrics in Databricks"
 	@echo "  make evaluate-cold-start - Evaluate new-user fallback strategies"
 	@echo "  make evaluate-cold-start-databricks - Track cold-start results in Databricks"
+	@echo "  make run-api       - Start the FastAPI recommendation server"
 	@echo "  make test          - Run the automated test suite"
 	
 download-data:
@@ -53,6 +54,9 @@ evaluate-cold-start:
 
 evaluate-cold-start-databricks:
 	PYTHONPATH=$(PYTHONPATH) python -m reco_nova.evaluate_cold_start --processed-dir $(PROCESSED_DIR) --artifacts-dir artifacts/cold_start --report-path docs/cold_start_report.md --tracking-uri databricks --experiment-name /Shared/reco-nova-cold-start
+
+run-api:
+	PYTHONPATH=$(PYTHONPATH) uvicorn reco_nova.api:app --host 0.0.0.0 --port 8000
 
 test:
 	PYTHONPATH=$(PYTHONPATH) python -m pytest -q
