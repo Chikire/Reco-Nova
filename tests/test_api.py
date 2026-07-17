@@ -68,6 +68,20 @@ def test_request_validation_rejects_invalid_limit():
     assert response.status_code == 422
 
 
+def test_assistant_endpoint_returns_catalog_grounded_products(monkeypatch):
+    monkeypatch.setenv("RECO_NOVA_LLM_PROVIDER", "local")
+    with TestClient(create_app(service())) as client:
+        response = client.post(
+            "/assistant/chat",
+            json={"message": "Show me one Tops product", "user_id": "known"},
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mode"] == "local"
+    assert body["intent"]["product_group"] == "Tops"
+    assert body["recommendations"][0]["article_id"] == "a"
+
+
 def test_missing_artifacts_report_degraded_and_503(monkeypatch, tmp_path):
     monkeypatch.setenv("RECO_NOVA_ARTIFACTS_DIR", str(tmp_path / "missing"))
     with TestClient(create_app()) as client:

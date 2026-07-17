@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,7 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from reco_nova.assistant import AssistantRequest, AssistantResult, ShoppingAssistant
 from reco_nova.models import ColdStartRecommender, HybridRecommender
 
 
@@ -25,6 +27,7 @@ class RecommendationRequest(BaseModel):
     club_member_status: str | None = None
     preferred_product_group: str | None = None
     session_article_ids: list[str] = Field(default_factory=list, max_length=50)
+    use_demographics: bool = True
 
 
 class ProductRecommendation(BaseModel):
@@ -32,6 +35,8 @@ class ProductRecommendation(BaseModel):
     score: float
     product_name: str | None = None
     product_group: str | None = None
+    colour: str | None = None
+    description: str | None = None
     image_path: str | None = None
     reason: str
     signals: dict[str, float] = Field(default_factory=dict)
@@ -73,7 +78,10 @@ class RecommendationService:
         columns = [
             "article_id",
             "prod_name",
+            "product_type_name",
             "product_group_name",
+            "detail_desc",
+            "item_text",
             "image_path",
         ]
         items = pd.read_parquet(processed_dir / "items_clean.parquet", columns=columns)
@@ -97,6 +105,7 @@ class RecommendationService:
                 club_member_status=payload.club_member_status,
                 preferred_product_group=payload.preferred_product_group,
                 session_article_ids=payload.session_article_ids,
+                use_demographics=payload.use_demographics,
             )
             ranked, strategy, explanation = (
                 result.recommendations,
@@ -130,6 +139,8 @@ class RecommendationService:
                     score=float(score),
                     product_name=_optional(item.get("prod_name")),
                     product_group=_optional(item.get("product_group_name")),
+                    description=_optional(item.get("item_text"))
+                    or _optional(item.get("detail_desc")),
                     image_path=_optional(item.get("image_path")),
                     reason=reason,
                     signals=signals,
@@ -140,6 +151,71 @@ class RecommendationService:
             user_id=payload.user_id,
             strategy=strategy,
             explanation=explanation,
+            recommendations=products,
+        )
+
+    def search_catalog(self, query: str, limit: int) -> RecommendationResponse | None:
+        """Find concrete product types in catalog text, ranked by purchase popularity."""
+        stopwords = {
+            "i", "me", "my", "want", "need", "find", "show", "give", "recommend",
+            "a", "an", "the", "some", "please", "product", "products", "item", "items",
+            "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+        }
+        tokens = [
+            token for token in re.findall(r"[a-z0-9]+", query.lower())
+            if token not in stopwords and len(token) > 1
+        ]
+        if not tokens:
+            return None
+
+        def matches_taxonomy(item: dict[str, object]) -> bool:
+            taxonomy = " ".join(
+                str(item.get(field, ""))
+                for field in ("product_type_name", "product_group_name")
+            ).lower()
+            for token in tokens:
+                forms = {token, token[:-1]} if token.endswith("s") and len(token) > 3 else {token}
+                if not any(re.search(rf"\b{re.escape(form)}s?\b", taxonomy) for form in forms):
+                    return False
+            return True
+
+        popularity = getattr(getattr(self.cold_start, "global_", None), "scores_", {})
+        candidates = [
+            (article_id, float(popularity.get(article_id, 0.0)))
+            for article_id, item in self.metadata.items()
+            if matches_taxonomy(item)
+        ]
+        ranked = [
+            (article_id, score)
+            for article_id, score in sorted(candidates, key=lambda entry: (-entry[1], entry[0]))[:limit]
+        ]
+        if not ranked:
+            return RecommendationResponse(
+                user_id=None,
+                strategy="catalog_text_search",
+                explanation=f"No catalog product type matches “{query.strip()}”.",
+                recommendations=[],
+            )
+        products = []
+        for article_id, score in ranked:
+            item = self.metadata[article_id]
+            products.append(
+                ProductRecommendation(
+                    article_id=article_id,
+                    score=score,
+                    product_name=_optional(item.get("prod_name")),
+                    product_group=_optional(item.get("product_group_name")),
+                    description=_optional(item.get("item_text"))
+                    or _optional(item.get("detail_desc")),
+                    image_path=_optional(item.get("image_path")),
+                    reason=f"Matches your request for “{query.strip()}”.",
+                    signals={"catalog_text_match": 1.0},
+                )
+            )
+        return RecommendationResponse(
+            user_id=None,
+            strategy="catalog_text_search",
+            explanation=f"Popular catalog products matching “{query.strip()}”.",
             recommendations=products,
         )
 
@@ -225,6 +301,28 @@ def create_app(service: RecommendationService | None = None) -> FastAPI:
     def explain(payload: RecommendationRequest, request: Request) -> RecommendationResponse:
         """Return recommendations with the routing strategy and reason text."""
         return ready(request).recommend(payload)
+
+    @api.post("/assistant/chat", response_model=AssistantResult)
+    def assistant_chat(payload: AssistantRequest, request: Request) -> AssistantResult:
+        """Convert natural-language shopping intent into grounded recommendations."""
+        service = ready(request)
+        groups = sorted(
+            {
+                str(item["product_group_name"])
+                for item in service.metadata.values()
+                if item.get("product_group_name")
+            }
+        )
+
+        def recommend(values: dict[str, object]) -> dict[str, object]:
+            catalog_query = str(values.pop("catalog_query", ""))
+            limit = int(values.get("limit", 6))
+            result = service.search_catalog(catalog_query, limit) if catalog_query else None
+            if result is None:
+                result = service.recommend(RecommendationRequest.model_validate(values))
+            return result.model_dump()
+
+        return ShoppingAssistant(recommend, groups).chat(payload)
 
     return api
 

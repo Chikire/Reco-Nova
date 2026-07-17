@@ -548,6 +548,32 @@ make run-api
 ```
 
 Interactive OpenAPI documentation is available at `http://localhost:8000/docs`.
+
+### Conversational shopping assistant
+
+Issue #22 adds `POST /assistant/chat`, which translates natural-language intent
+(category, colour, style, result count, and budget) into a grounded call to the
+recommendation service. The model never selects or invents product IDs: all
+returned products and explanations come from the local catalog and ranker.
+
+The assistant works without credentials. It uses a local Ollama model for
+structured intent extraction and automatically falls back to its deterministic
+parser whenever Ollama is unavailable. Install Ollama and pull the default
+lightweight model once:
+
+```bash
+brew install ollama
+ollama serve
+# In another terminal:
+ollama pull llama3.2:3b
+make run-api
+```
+
+No API key is required. Override the model with `RECO_NOVA_OLLAMA_MODEL`, or set
+`RECO_NOVA_LLM_PROVIDER=local` to disable model calls entirely. Budget is
+extracted but clearly marked unverified because the H&M item catalog has no
+authoritative current retail-price field. Run `make evaluate-assistant` for the
+reproducible intent and safety proxy report.
 The service exposes:
 
 - `GET /health` for model readiness.

@@ -185,6 +185,39 @@ def render_product(product: dict[str, Any], rank: int) -> None:
                     st.caption(f"Evidence product: {evidence[0]}")
 
 
+def render_assistant(mode: str, values: dict[str, Any]) -> None:
+    """Render the conversational layer while keeping product facts API-grounded."""
+    st.markdown(
+        '<div class="rn-section"><div><h2>Ask Reco—Nova</h2>'
+        '<p>Describe a category, colour, style, occasion, or budget in your own words.</p></div>'
+        '<span class="rn-live">GENAI ASSISTANT</span></div>',
+        unsafe_allow_html=True,
+    )
+    history = st.session_state.setdefault("assistant_history", [])
+    for turn in history:
+        with st.chat_message(turn["role"]):
+            st.markdown(turn["content"])
+    prompt = st.chat_input("Try: Find me six casual black pieces under $60")
+    if not prompt:
+        return
+    history.append({"role": "user", "content": prompt})
+    payload = build_payload(mode, **values)
+    payload.update({"message": prompt, "history": history[:-1][-12:]})
+    try:
+        with st.spinner("Understanding your shopping intent…"):
+            answer = api_request("/assistant/chat", payload)
+    except APIError as exc:
+        st.error(str(exc))
+        return
+    history.append({"role": "assistant", "content": answer["message"]})
+    st.session_state["recommendations"] = {
+        "explanation": answer["message"],
+        "strategy": answer.get("strategy") or "conversational_discovery",
+        "recommendations": answer.get("recommendations", []),
+    }
+    st.rerun()
+
+
 def main() -> None:
     st.set_page_config(
         page_title="Reco-Nova · Find your next favorite",
@@ -206,6 +239,8 @@ def main() -> None:
         unsafe_allow_html=True,
     )
     mode, values = render_sidebar()
+    render_assistant(mode, values)
+    st.divider()
     with st.form("discovery_form", border=False):
         left, right = st.columns([4, 1])
         with left:
