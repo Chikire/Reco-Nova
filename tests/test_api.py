@@ -82,6 +82,30 @@ def test_assistant_endpoint_returns_catalog_grounded_products(monkeypatch):
     assert body["recommendations"][0]["article_id"] == "a"
 
 
+def test_assistant_budget_query_still_returns_products(monkeypatch):
+    """Budget-qualified queries must not return 0 results.
+
+    Regression: 'Show me tops under $50' was returning 0 grounded
+    recommendations because the budget tokens ('under', '50') were not
+    in the stopword list, causing them to be used as taxonomy tokens that
+    matched no product type.  The catalog search must now either match via
+    the remaining tokens or fall back to the recommendation service.
+    """
+    monkeypatch.setenv("RECO_NOVA_LLM_PROVIDER", "local")
+    with TestClient(create_app(service())) as client:
+        response = client.post(
+            "/assistant/chat",
+            json={"message": "Show me tops under $50"},
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["recommendations"]) > 0, (
+        "Budget query must not return 0 results; catalog search or fallback should populate"
+    )
+    # Budget is now applied server-side via prices; it should not appear as unsupported.
+    assert "budget" not in body["unsupported_constraints"]
+
+
 def test_missing_artifacts_report_degraded_and_503(monkeypatch, tmp_path):
     monkeypatch.setenv("RECO_NOVA_ARTIFACTS_DIR", str(tmp_path / "missing"))
     with TestClient(create_app()) as client:
